@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: wemake
+    runtime: docker
+    plan: starter
+    disk:
+      name: data
+      mountPath: /data
+      sizeGB: 3
+    envVars:
+      - key: DATA_DIR
+        value: /data

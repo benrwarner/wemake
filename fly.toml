@@ -1,0 +1,20 @@
+# fly launch --copy-config --no-deploy && fly volumes create wemake_data --size 3 && fly deploy
+app = "wemake-jam"
+primary_region = "iad"
+
+[build]
+
+[env]
+  PORT = "8787"
+  DATA_DIR = "/data"
+
+[[mounts]]
+  source = "wemake_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8787
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
