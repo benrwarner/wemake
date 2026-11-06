@@ -101,3 +101,25 @@ test('room state persists after everyone leaves', async () => {
   assert.equal(M.snapshot(b.doc).project.name, 'Persisted Song');
   b.ws.close();
 });
+
+test('unjoined sockets cannot edit or signal; presence is sanitized', async () => {
+  const a = client('itest-five', 'Ana');
+  await a.ready;
+  const welcomeA = await a.waitFor((m) => m.t === 'welcome');
+  // raw socket that never says hello
+  const lurker = new WebSocket(`ws://localhost:${PORT}/ws?room=itest-five`);
+  await new Promise((r) => lurker.on('message', r));
+  lurker.send(JSON.stringify({ t: 'signal', to: welcomeA.id, data: { description: { type: 'offer', sdp: 'x' } } }));
+  const evil = new Y.Doc(); M.setProject(evil, { name: 'hijacked' });
+  lurker.send(Y.encodeStateAsUpdate(evil));
+  const b = client('itest-five', 'Ben');
+  await b.ready;
+  await new Promise((r) => setTimeout(r, 200));
+  assert.ok(!a.msgs.some((m) => m.t === 'signal'), 'signal from unjoined socket was relayed');
+  assert.notEqual(M.snapshot(b.doc).project.name, 'hijacked');
+  b.ws.send(JSON.stringify({ t: 'presence', state: [1, 2] }));
+  b.ws.send(JSON.stringify({ t: 'presence', state: { track: 'x', armed: 'yes', evil: { deep: 1 }, mix: { p: 999 } } }));
+  const pres = await a.waitFor((m) => m.t === 'presence' && m.state.track === 'x');
+  assert.deepEqual(pres.state, { track: 'x', mix: { p: 12 } });
+  lurker.close(); a.ws.close(); b.ws.close();
+});

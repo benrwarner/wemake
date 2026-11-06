@@ -127,7 +127,7 @@ export class Session extends Emitter<Events> {
     switch (msg.t) {
       case 'welcome':
         this.myId = msg.id;
-        this.peers = new Map(msg.peers.map((p: PeerInfo) => [p.id, p]));
+        this.peers = new Map(msg.peers.map((p: PeerInfo) => [p.id, { ...p, state: p.state ?? {} }]));
         this.emit('status', 'online');
         this.emit('welcome', msg.id);
         this.emit('peers', this.peers);
@@ -147,7 +147,7 @@ export class Session extends Emitter<Events> {
         break;
       }
       case 'peer-join':
-        this.peers.set(msg.peer.id, msg.peer);
+        this.peers.set(msg.peer.id, { ...msg.peer, state: msg.peer.state ?? {} });
         this.emit('peer-join', msg.peer);
         this.emit('peers', this.peers);
         break;
@@ -159,7 +159,7 @@ export class Session extends Emitter<Events> {
         break;
       case 'presence': {
         const p = this.peers.get(msg.id);
-        if (p) { p.state = msg.state; this.emit('peers', this.peers); }
+        if (p) { p.state = msg.state && typeof msg.state === 'object' ? msg.state : {}; this.emit('peers', this.peers); }
         break;
       }
       case 'cursor': this.cursors.set(msg.id, { c: msg.c, at: performance.now() }); break;

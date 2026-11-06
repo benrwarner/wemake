@@ -2,7 +2,13 @@ import { useState } from 'react';
 import { TRACK_COLORS } from '../../../shared/model';
 
 const WORDS = ['velvet', 'neon', 'echo', 'groove', 'lunar', 'amber', 'static', 'honey', 'cobalt', 'drift', 'fuzz', 'tidal'];
-const randomRoom = () => `${WORDS[Math.floor(Math.random() * WORDS.length)]}-${WORDS[Math.floor(Math.random() * WORDS.length)]}-${Math.floor(Math.random() * 90 + 10)}`;
+// Session names double as the access secret, so the random part carries 64 bits of entropy.
+function randomRoom() {
+  const b = crypto.getRandomValues(new Uint8Array(10));
+  const word = (i: number) => WORDS[b[i] % WORDS.length];
+  const secret = Array.from(b.slice(2), (x) => x.toString(36).padStart(2, '0')).join('');
+  return `${word(0)}-${word(1)}-${secret}`;
+}
 
 function load(key: string, fallback: string) { try { return localStorage.getItem(key) ?? fallback; } catch { return fallback; } }
 function save(key: string, v: string) { try { localStorage.setItem(key, v); } catch { /* */ } }
@@ -12,7 +18,7 @@ export function Lobby({ onJoin }: { onJoin: (room: string, name: string, color: 
   const [room, setRoom] = useState(fromUrl || randomRoom());
   const [name, setName] = useState(load('wemake.name', ''));
   const [color, setColor] = useState(load('wemake.color', TRACK_COLORS[Math.floor(Math.random() * TRACK_COLORS.length)]));
-  const clean = room.trim().toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48);
+  const clean = room.trim().toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64);
   const ok = clean.length > 0 && name.trim().length > 0;
   const join = (e: React.FormEvent) => {
     e.preventDefault();

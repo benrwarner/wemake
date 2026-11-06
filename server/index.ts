@@ -17,7 +17,7 @@ const DATA = path.resolve(process.env.DATA_DIR ?? path.join(ROOT, 'data'));
 const DIST = path.join(ROOT, 'dist');
 const PORT = Number(process.env.PORT ?? 8787);
 const MAX_UPLOAD = 300 * 1024 * 1024;
-const ROOM_RE = /^[a-z0-9][a-z0-9-]{0,47}$/i;
+const ROOM_RE = /^[a-z0-9][a-z0-9-]{0,63}$/i;
 const ID_RE = /^[a-z0-9]{4,40}$/i;
 
 fs.mkdirSync(path.join(DATA, 'rooms'), { recursive: true });
@@ -74,6 +74,23 @@ function broadcast(room: Room, msg: unknown, except?: string) {
   const data = JSON.stringify(msg);
   for (const p of room.peers.values()) if (p.id !== except && p.ws.readyState === WebSocket.OPEN) p.ws.send(data);
 }
+// Presence is relayed to every client, so only well-typed known fields pass.
+function sanitizePresence(raw: unknown): Record<string, unknown> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const r = raw as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  const str = (k: string) => { if (typeof r[k] === 'string') out[k] = (r[k] as string).slice(0, 64); };
+  const bool = (k: string) => { if (typeof r[k] === 'boolean') out[k] = r[k]; };
+  const num = (k: string) => { if (typeof r[k] === 'number' && Number.isFinite(r[k])) out[k] = r[k]; };
+  str('track'); str('editing'); bool('armed'); bool('recording'); bool('live'); bool('tunedIn'); num('cursor'); num('latency');
+  if (r.mix && typeof r.mix === 'object' && !Array.isArray(r.mix)) {
+    const mix: Record<string, number> = {};
+    for (const [k, v] of Object.entries(r.mix).slice(0, 32)) if (typeof v === 'number' && Number.isFinite(v)) mix[k.slice(0, 32)] = Math.max(-60, Math.min(12, v));
+    out.mix = mix;
+  }
+  return out;
+}
+
 const peerInfo = (p: Peer) => ({ id: p.id, name: p.name, color: p.color, state: p.state });
 
 // ---------------- HTTP ----------------
@@ -166,6 +183,7 @@ wss.on('connection', (ws, req) => {
 
   ws.on('message', (data, isBinary) => {
     if (isBinary) {
+      if (!joined) return; // must announce yourself before editing
       const update = new Uint8Array(data as Buffer);
       try { Y.applyUpdate(room.doc, update, peer.id); } catch { return; }
       for (const p of room.peers.values()) if (p.id !== peer.id && p.ws.readyState === WebSocket.OPEN) p.ws.send(update);
@@ -186,10 +204,11 @@ wss.on('connection', (ws, req) => {
         return;
       }
       case 'presence':
-        if (!joined || typeof msg.state !== 'object') return;
-        peer.state = msg.state;
-        return broadcast(room, { t: 'presence', id: peer.id, state: msg.state }, peer.id);
+        if (!joined) return;
+        peer.state = sanitizePresence(msg.state);
+        return broadcast(room, { t: 'presence', id: peer.id, state: peer.state }, peer.id);
       case 'signal': {
+        if (!joined) return; // only visible participants may negotiate media
         const target = room.peers.get(msg.to);
         if (target) send(target.ws, { t: 'signal', from: peer.id, data: msg.data });
         return;

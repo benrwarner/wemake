@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import * as M from '../../../shared/model';
 import type { FxSlot, Track } from '../../../shared/model';
 import type { Studio } from '../state/studio';
-import { builtinFx, builtinInstruments, externalUrl, getDef, isExternal, isTrusted, trustPlugin, validatePluginUrl } from '../audio/plugins/registry';
+import { builtinFx, builtinInstruments, externalUrl, getDef, safeHost, shortPluginName, isExternal, isTrusted, trustPlugin, validatePluginUrl } from '../audio/plugins/registry';
 import { type ParamDef, resolveParams } from '../audio/plugins/types';
 import { ParamControl } from './controls';
 import { useStudio } from './hooks';
@@ -107,7 +107,7 @@ function TrustBanner({ type }: { type: string }) {
   const url = externalUrl(type);
   return (
     <div className="trust">
-      <p>This session uses an external plugin from <b>{new URL(url).host}</b>. It runs code in your browser.</p>
+      <p>This session uses an external plugin from <b>{safeHost(type)}</b>. It runs code in your browser.</p>
       <code>{url}</code>
       <button onClick={() => trustPlugin(type)}>Trust &amp; load</button>
     </div>
@@ -204,7 +204,7 @@ function FxCard({ s, t, f, first, last }: { s: Studio; t: Track; f: FxSlot; firs
     <div className={`fx-card ${f.bypass ? 'bypassed' : ''}`}>
       <div className="fx-head">
         <button className={`power ${f.bypass ? '' : 'on'}`} onClick={() => s.edit((d) => M.setFx(d, t.id, f.id, { bypass: !f.bypass }))} title={f.bypass ? 'Enable' : 'Bypass'} aria-label="Toggle effect">⏻</button>
-        <button className="fx-name" onClick={() => setOpen(!open)}>{def?.name ?? (isExternal(f.type) ? new URL(externalUrl(f.type)).pathname.split('/').filter(Boolean).slice(-2).join('/') : f.type)}</button>
+        <button className="fx-name" onClick={() => setOpen(!open)}>{def?.name ?? (isExternal(f.type) ? shortPluginName(f.type) : f.type)}</button>
         <span className="spacer" />
         <button disabled={first} onClick={() => s.edit((d) => M.moveFx(d, t.id, f.id, -1))} aria-label="Move up">↑</button>
         <button disabled={last} onClick={() => s.edit((d) => M.moveFx(d, t.id, f.id, 1))} aria-label="Move down">↓</button>

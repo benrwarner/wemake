@@ -18,6 +18,11 @@ const trusted = loadTrusted();
 const trustListeners = new Set<() => void>();
 export const isExternal = (type: string) => type.startsWith('ext:') || type.startsWith('wam:');
 export const externalUrl = (type: string) => type.slice(4);
+/** Host of an external plugin URL, or a placeholder if it's malformed (it comes from shared, untrusted data). */
+export function safeHost(type: string) { try { return new URL(externalUrl(type)).host; } catch { return 'invalid URL'; } }
+export function shortPluginName(type: string) {
+  try { return new URL(externalUrl(type)).pathname.split('/').filter(Boolean).slice(-2).join('/') || safeHost(type); } catch { return 'invalid plugin'; }
+}
 export const isTrusted = (type: string) => !isExternal(type) || trusted.has(externalUrl(type));
 export function trustPlugin(type: string) {
   trusted.add(externalUrl(type));
@@ -48,7 +53,8 @@ async function loadExternal(type: string): Promise<PluginDef> {
 // ---------- WAM 2.0 ----------
 function wamDef(type: string): PluginDef {
   const url = externalUrl(type);
-  const name = decodeURIComponent(new URL(url).pathname.split('/').filter((s) => s && !/\.js$/.test(s)).pop() ?? 'WAM');
+  let name = 'WAM';
+  try { name = decodeURIComponent(new URL(url).pathname.split('/').filter((s) => s && !/\.js$/.test(s)).pop() ?? 'WAM'); } catch { /* keep default */ }
   return {
     type, name, kind: 'fx', category: 'WAM 2.0', params: [],
     async create(host: PluginHost): Promise<PluginInstance> {
@@ -89,6 +95,7 @@ export async function loadDef(type: string): Promise<PluginDef> {
   if (known) return known;
   if (!isExternal(type)) throw new Error(`Unknown plugin "${type}"`);
   if (!isTrusted(type)) throw new Error('Plugin not trusted on this device');
+  try { validatePluginUrl(externalUrl(type)); } catch { throw new Error('Invalid plugin URL'); }
   let p = loading.get(type);
   if (!p) {
     p = type.startsWith('wam:') ? Promise.resolve(wamDef(type)) : loadExternal(type);

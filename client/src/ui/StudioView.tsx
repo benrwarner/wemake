@@ -9,6 +9,7 @@ import { Mixer } from './Mixer';
 import { People } from './People';
 import { Keyboard, useComputerKeyboard } from './Keyboard';
 import { Settings } from './Settings';
+import { ErrorBoundary } from './ErrorBoundary';
 
 export function StudioView() {
   const s = useStudio();
@@ -47,7 +48,7 @@ export function StudioView() {
     <div className={`studio ${side ? '' : 'no-side'}`}>
       <TopBar onSettings={() => setSettings(true)} onToggleSide={() => setSide(!side)} />
       <main className="center">
-        <Arrange />
+        <ErrorBoundary label="the arrangement"><Arrange /></ErrorBoundary>
         <section className="bottom">
           <nav className="tabs" role="tablist">
             {(['track', 'editor', 'mixer'] as const).map((t) => (
@@ -57,14 +58,16 @@ export function StudioView() {
             ))}
           </nav>
           <div className="bottom-body">
-            {s.bottom === 'track' && <Inspector />}
-            {s.bottom === 'editor' && <PianoRoll />}
-            {s.bottom === 'mixer' && <Mixer />}
+            <ErrorBoundary key={`${s.bottom}:${s.selectedTrack}`} label="this panel">
+              {s.bottom === 'track' && <Inspector />}
+              {s.bottom === 'editor' && <PianoRoll />}
+              {s.bottom === 'mixer' && <Mixer />}
+            </ErrorBoundary>
           </div>
         </section>
         <Keyboard />
       </main>
-      {side && <People />}
+      {side && <ErrorBoundary label="the people panel"><People /></ErrorBoundary>}
       {settings && <Settings onClose={() => setSettings(false)} />}
       <div className="toasts" aria-live="polite">
         {s.toasts.map((t) => <div key={t.id} className={`toast ${t.kind}`}>{t.text}</div>)}

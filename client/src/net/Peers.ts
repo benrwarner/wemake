@@ -68,7 +68,7 @@ export class Peers extends Emitter<Events> {
     session.on('peer-leave', (id) => this.drop(id));
     session.on('status', (s) => { if (s === 'offline') for (const id of [...this.conns.keys()]) this.drop(id); });
     session.on('signal', ({ from, data }) => this.onSignal(from, data));
-    session.on('midi', ({ from, ev }) => this.emit('midi', { from, ev }));
+    session.on('midi', ({ from, ev }) => { if (session.peers.has(from)) this.emit('midi', { from, ev }); });
     this.statsTimer = setInterval(() => this.pollStats(), 2000);
   }
 
@@ -161,6 +161,7 @@ export class Peers extends Emitter<Events> {
 
   // "Perfect negotiation" (W3C pattern) handles offers crossing in flight.
   private async onSignal(from: string, data: any) {
+    if (!this.session.peers.has(from)) return; // never negotiate media with someone not visibly in the room
     const c = this.conns.get(from) ?? this.connect(from, false);
     const { pc } = c;
     try {
