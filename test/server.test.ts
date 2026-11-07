@@ -480,3 +480,11 @@ test("strangers can't lock a friend out from a device they've used before", asyn
   assert.equal((await api('/api/auth/login', { body: { username: 'lockout', password: 'password123' } })).status, 429, 'new address is capped');
   assert.equal((await api('/api/auth/login', { body: { username: 'lockout', password: 'password123' }, ip: home })).status, 200, 'known address still works');
 });
+
+test('parallel guesses cannot slip past the limit while hashing', async () => {
+  await newUser('parallel');
+  const ip = '203.0.113.88';
+  const codes = await Promise.all(Array.from({ length: 30 }, () => api('/api/auth/login', { body: { username: 'parallel', password: 'wrongwrong' }, ip }).then((r) => r.status)));
+  assert.ok(codes.filter((c) => c === 401).length <= 10, codes.join(','));
+  assert.ok(codes.every((c) => c === 401 || c === 429));
+});

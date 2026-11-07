@@ -156,4 +156,10 @@ export class Limiter {
   clear(key: string): void {
     this.fails.delete(key);
   }
+
+  /** Takes back one fail() (used when an attempt reserved up front turns out to be good). */
+  undo(key: string): void {
+    const e = this.fails.get(key);
+    if (e && --e.n <= 0) this.fails.delete(key);
+  }
 }

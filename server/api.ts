@@ -176,13 +176,14 @@ export class Api {
       // The per-username cap doesn't apply where this user has signed in before, so strangers can't lock them out.
       const known = this.knownPairs.has(pairKey);
       if (this.ipLimit.blocked(ip) || this.userIpLimit.blocked(pairKey) || (!known && this.userLimit.blocked(userKey))) throw new HttpError(429, TOO_MANY);
+      // Count the attempt before hashing (which is async), so parallel guesses can't all pass the check.
+      this.ipLimit.fail(ip);
+      this.userIpLimit.fail(pairKey);
+      if (!known) this.userLimit.fail(userKey);
       const user = await accounts.login(str(body.username), str(body.password));
-      if (!user) {
-        this.ipLimit.fail(ip);
-        this.userIpLimit.fail(pairKey);
-        this.userLimit.fail(userKey);
-        throw new HttpError(401, 'Wrong username or password');
-      }
+      if (!user) throw new HttpError(401, 'Wrong username or password');
+      this.ipLimit.undo(ip);
+      if (!known) this.userLimit.undo(userKey);
       this.userIpLimit.clear(pairKey);
       this.knownPairs.delete(pairKey);
       this.knownPairs.add(pairKey);
