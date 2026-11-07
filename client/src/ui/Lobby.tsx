@@ -1,4 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useUser } from '../net/account';
+import { AccountCorner, MySongs } from './Account';
 import { TRACK_COLORS } from '../../../shared/model';
 
 const WORDS = ['velvet', 'neon', 'echo', 'groove', 'lunar', 'amber', 'static', 'honey', 'cobalt', 'drift', 'fuzz', 'tidal'];
@@ -19,6 +21,8 @@ export function Lobby({ onJoin, error }: { onJoin: (room: string, name: string, 
   const [name, setName] = useState(load('wemake.name', ''));
   const [password, setPassword] = useState('');
   const [color, setColor] = useState(load('wemake.color', TRACK_COLORS[Math.floor(Math.random() * TRACK_COLORS.length)]));
+  const [user] = useUser();
+  useEffect(() => { if (user) setName((n) => n || user.username); }, [user]);
   const clean = room.trim().toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64);
   // audioWorklet and getUserMedia only exist on secure origins (https:// or localhost)
   const insecure = !window.isSecureContext;
@@ -29,9 +33,17 @@ export function Lobby({ onJoin, error }: { onJoin: (room: string, name: string, 
     save('wemake.name', name.trim()); save('wemake.color', color);
     onJoin(clean, name.trim(), color, password);
   };
+  const open = (r: string) => {
+    if (insecure) return;
+    const who = name.trim() || user?.username || 'Guest';
+    save('wemake.name', who); save('wemake.color', color);
+    onJoin(r, who, color, '');
+  };
   return (
     <div className="lobby">
       <div className="lobby-glow" />
+      <AccountCorner />
+      <div className="lobby-stack">
       <form className="lobby-card" onSubmit={join}>
         <div className="brand big"><span className="brand-mark" />WeMake</div>
         {insecure && (
@@ -65,6 +77,8 @@ export function Lobby({ onJoin, error }: { onJoin: (room: string, name: string, 
           <li>Chrome or Edge gives the lowest live latency.</li>
         </ul>
       </form>
+      <MySongs onOpen={open} />
+      </div>
     </div>
   );
 }

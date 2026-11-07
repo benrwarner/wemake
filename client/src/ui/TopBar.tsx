@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import * as M from '../../../shared/model';
 import { fmtPos, useFrame, useStudio } from './hooks';
+import { AccountChip } from './Account';
 
 export function TopBar({ onSettings, onToggleSide }: { onSettings: () => void; onToggleSide: () => void }) {
   const s = useStudio();
@@ -61,6 +62,7 @@ export function TopBar({ onSettings, onToggleSide }: { onSettings: () => void; o
       </div>
 
       <div className="topbar-right">
+        <AccountChip />
         <button className="ghost latency" onClick={onSettings} title="Audio latency: output / input+output round trip. Click to calibrate.">
           <span className="muted">lat</span> {(lat.output * 1000).toFixed(0)}<span className="muted">/</span>{(lat.roundTrip * 1000).toFixed(0)}ms
           {e.settings.roundTripMs == null && <span className="warn-dot" title="Not calibrated" />}
