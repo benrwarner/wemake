@@ -15,7 +15,7 @@ let proc: ChildProcess;
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wemake-test-'));
 
 before(async () => {
-  proc = spawn('npx', ['tsx', 'server/index.ts'], { env: { ...process.env, PORT: String(PORT), DATA_DIR: dataDir, SIGNUP_CODE: 'letmein', MIN_FREE_GB: '0' }, stdio: 'pipe' });
+  proc = spawn('npx', ['tsx', 'server/index.ts'], { env: { ...process.env, PORT: String(PORT), DATA_DIR: dataDir, SIGNUP_CODE: 'letmein', MIN_FREE_GB: '0', ACCOUNT_QUOTA_GB: String(1000 / 1024 ** 3) }, stdio: 'pipe' });
   for (let i = 0; i < 50; i++) {
     try { await fetch(`${BASE}/api/time`); return; } catch { await new Promise((r) => setTimeout(r, 100)); }
   }
@@ -487,4 +487,26 @@ test('parallel guesses cannot slip past the limit while hashing', async () => {
   const codes = await Promise.all(Array.from({ length: 30 }, () => api('/api/auth/login', { body: { username: 'parallel', password: 'wrongwrong' }, ip }).then((r) => r.status)));
   assert.ok(codes.filter((c) => c === 401).length <= 10, codes.join(','));
   assert.ok(codes.every((c) => c === 401 || c === 429));
+});
+
+test('takes count against the song owner\'s storage cap; guest songs are uncapped', async () => {
+  const { cookie } = await newUser('quotaowner');
+  const owner = client('itest-quota', 'Owner', undefined, cookie);
+  await owner.ready;
+  const guest = client('itest-quota', 'Guest');
+  await guest.ready;
+  const { token } = await guest.waitFor((m) => m.t === 'welcome');
+  const headers = { 'x-wemake-token': token };
+  const put = (id: string, n: number) => fetch(`${BASE}/api/audio/itest-quota/${id}`, { method: 'PUT', body: new Uint8Array(n), headers });
+  assert.equal((await put('qone', 600)).status, 201, 'a guest recording in an owned song is fine while there is room');
+  const full = await put('qtwo', 600);
+  assert.equal(full.status, 507);
+  assert.match((await full.json()).error, /storage/);
+  assert.equal((await put('qthree', 300)).status, 201, 'smaller takes still fit');
+  const usage = await api('/api/me/storage', { cookie });
+  assert.equal(usage.status, 200);
+  assert.equal(usage.body.used, 900);
+  assert.equal(usage.body.limit, 1000);
+  assert.equal((await api('/api/me/storage')).status, 401);
+  owner.ws.close(); guest.ws.close();
 });

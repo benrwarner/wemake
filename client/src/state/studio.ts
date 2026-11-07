@@ -27,7 +27,8 @@ export class Studio {
 
   // local UI state
   selectedTrack: string | null = null;
-  selectedClip: string | null = null;
+  selectedClip: string | null = null; // the primary clip (last clicked)
+  selectedClips = new Set<string>(); // everything selected, including the primary
   editorClip: string | null = null;
   bottom: BottomTab = 'track';
   ppb = 28; // pixels per beat
@@ -110,6 +111,7 @@ export class Studio {
       if (this.selectedTrack && !this.snap.tracks[this.selectedTrack]) this.selectedTrack = this.snap.order[0] ?? null;
       if (this.editorClip && !this.snap.clips[this.editorClip]) this.editorClip = null;
       if (this.selectedClip && !this.snap.clips[this.selectedClip]) this.selectedClip = null;
+      for (const id of this.selectedClips) if (!this.snap.clips[id]) this.selectedClips.delete(id);
       this.bump();
     });
   }
@@ -138,9 +140,19 @@ export class Studio {
   selectTrack(id: string | null) { this.selectedTrack = id; this.bump(); }
   selectClip(id: string | null) {
     this.selectedClip = id;
+    this.selectedClips = new Set(id ? [id] : []);
     if (id) this.selectedTrack = this.snap.clips[id]?.trackId ?? this.selectedTrack;
     this.bump();
   }
+  /** Select several clips at once; `primary` (default: the last) drives the inspector and editor. */
+  selectClips(ids: Iterable<string>, primary?: string | null) {
+    this.selectedClips = new Set(ids);
+    const p = primary !== undefined ? primary : [...this.selectedClips].pop() ?? null;
+    this.selectedClip = p && this.selectedClips.has(p) ? p : [...this.selectedClips].pop() ?? null;
+    if (this.selectedClip) this.selectedTrack = this.snap.clips[this.selectedClip]?.trackId ?? this.selectedTrack;
+    this.bump();
+  }
+  isSelected(id: string) { return this.selectedClips.has(id); }
   openEditor(clipId: string) {
     this.editorClip = clipId;
     this.selectClip(clipId);
@@ -340,6 +352,10 @@ export class Studio {
         try {
           const res = await fetch(`/api/audio/${this.room}/${id}`, { method: 'PUT', body: data, headers: { 'content-type': 'audio/wav', 'x-wemake-token': this.session.token } });
           if (res.status === 413) throw Object.assign(new Error('Take too large to upload through this server. Try a shorter take.'), { final: true });
+          if (res.status === 507) {
+            const msg = ((await res.json().catch(() => null)) as { error?: string } | null)?.error ?? 'The server is out of space';
+            throw Object.assign(new Error(msg), { final: true });
+          }
           if (!res.ok) throw Object.assign(new Error(`upload failed (${res.status})`), { final: res.status >= 400 && res.status < 500 });
           return true;
         } catch (err) {

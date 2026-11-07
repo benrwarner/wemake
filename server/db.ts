@@ -39,6 +39,16 @@ const MIGRATIONS: string[] = [
      created_at INTEGER NOT NULL
    );
    CREATE INDEX sounds_user ON sounds(user_id);`,
+  // v2: who started each song; its takes count against that account's storage cap.
+  // Kept apart from user_rooms so removing a song from "My songs" doesn't free its storage.
+  `CREATE TABLE room_owners (
+     room TEXT PRIMARY KEY,
+     user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+     created_at INTEGER NOT NULL
+   );
+   CREATE INDEX room_owners_user ON room_owners(user_id);
+   INSERT OR IGNORE INTO room_owners (room, user_id, created_at)
+     SELECT room, user_id, last_opened_at FROM user_rooms WHERE role = 'owner';`,
 ];
 
 export class Db {

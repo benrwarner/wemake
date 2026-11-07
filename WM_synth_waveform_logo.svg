@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1728 768" role="img" aria-labelledby="title desc">
+  <title id="title">WM Synth Waveform Logo</title>
+  <desc id="desc">A continuous, angular oscilloscope waveform forming the letters W and M.</desc>
+
+  <style>
+    :root {
+      --wave-color: #35f5d0;
+      --grid-color: #123b38;
+      --glow-color: #35f5d0;
+      --background-color: transparent;
+    }
+    .background { fill: var(--background-color); }
+    .grid { fill: none; stroke: var(--grid-color); stroke-width: 1; opacity: .32; }
+    .wave-glow {
+      fill: none; stroke: var(--glow-color); stroke-width: 13;
+      stroke-linecap: square; stroke-linejoin: miter; opacity: .20;
+      filter: url(#soft-glow);
+    }
+    .wave {
+      fill: none; stroke: var(--wave-color); stroke-width: 5;
+      stroke-linecap: square; stroke-linejoin: miter;
+    }
+  </style>
+
+  <defs>
+    <filter id="soft-glow" x="-20%" y="-60%" width="140%" height="220%">
+      <feGaussianBlur stdDeviation="7"/>
+    </filter>
+  </defs>
+
+  <!-- Optional background grid; delete this group for a completely clean logo. -->
+  <g class="grid">
+    <path d="M0 154H1728 M0 276H1728 M0 399H1728 M0 522H1728 M0 645H1728"/>
+    <path d="M0 0V768 M178 0V768 M355 0V768 M532 0V768 M709 0V768 M886 0V768 M1063 0V768 M1240 0V768 M1417 0V768 M1594 0V768 M1727 0V768"/>
+  </g>
+
+  <!-- Single continuous, deliberately shaped signal. -->
+  <path class="wave-glow" d="
+    M20 430 H270
+    L282 426 H286 V422 H294 V414 H302 V409 H310 V430
+    H318 V389 H328 V430 H336 V367 H348 V482
+    H362 V337 H470 L535 507 H545 L615 337 H660
+    L720 507 H730 L790 337 H835 V430 H945 V519
+    H975 V317 H1035 L1110 482 H1120 L1200 317 H1258
+    V507 H1328 V367 H1338 V430 H1350 V389 H1360 V430
+    H1370 V409 H1380 V414 H1390 V422 H1398 V426 H1410
+    H1707"/>
+  <path class="wave" d="
+    M20 430 H270
+    L282 426 H286 V422 H294 V414 H302 V409 H310 V430
+    H318 V389 H328 V430 H336 V367 H348 V482
+    H362 V337 H470 L535 507 H545 L615 337 H660
+    L720 507 H730 L790 337 H835 V430 H945 V519
+    H975 V317 H1035 L1110 482 H1120 L1200 317 H1258
+    V507 H1328 V367 H1338 V430 H1350 V389 H1360 V430
+    H1370 V409 H1380 V414 H1390 V422 H1398 V426 H1410
+    H1707"/>
+</svg>

@@ -19,6 +19,7 @@ import { Api, currentUser, originAllowed } from './api.ts';
 import { Songs } from './songs.ts';
 import { Sounds } from './sounds.ts';
 import { Storage } from './storage.ts';
+import { Quota } from './quota.ts';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DATA = path.resolve(process.env.DATA_DIR ?? path.join(ROOT, 'data'));
@@ -48,7 +49,16 @@ const db = new Db(path.join(DATA, 'wemake.db'));
 const accounts = new Accounts(db);
 const songs = new Songs(db);
 const sounds = new Sounds(db);
-const api = new Api({ accounts, songs, sounds, ip: clientIp, allowedOrigins: ALLOWED_ORIGINS, signupCode: process.env.SIGNUP_CODE || undefined });
+// Each account's songs share this much take storage (ACCOUNT_QUOTA_GB=0 turns the cap off).
+const QUOTA_GB = process.env.ACCOUNT_QUOTA_GB && Number(process.env.ACCOUNT_QUOTA_GB) >= 0 ? Number(process.env.ACCOUNT_QUOTA_GB) : 5;
+const quota = new Quota({
+  limitBytes: QUOTA_GB > 0 ? QUOTA_GB * 1024 ** 3 : Infinity,
+  ownerOf: (room) => songs.ownerOf(room),
+  ownedRooms: (user) => songs.ownedRooms(user),
+  roomBytes: (room) => storage.roomBytes(room),
+});
+const QUOTA_FULL = `This song's owner has used all ${QUOTA_GB} GB of their storage`;
+const api = new Api({ accounts, songs, sounds, quota, ip: clientIp, allowedOrigins: ALLOWED_ORIGINS, signupCode: process.env.SIGNUP_CODE || undefined });
 const BACKUPS = path.join(DATA, 'backups');
 function backupDb() {
   try { db.backup(BACKUPS); } catch (err) { console.error('database backup failed', err); }
@@ -174,22 +184,26 @@ const server = http.createServer((req, res) => {
         if (!storage.hasRoom()) return json(res, 507, { error: 'The server is almost out of space' });
         const len = Number(req.headers['content-length'] ?? 0);
         if (len > MAX_UPLOAD) return json(res, 413, { error: 'too large' });
+        const hold = quota.reserve(room.toLowerCase(), len, MAX_UPLOAD);
+        if (!hold) return json(res, 507, { error: QUOTA_FULL });
+        res.on('close', hold.release);
         fs.mkdirSync(path.dirname(file), { recursive: true });
         const tmp = `${file}.${process.pid}.part`;
         const out = fs.createWriteStream(tmp);
         let size = 0;
         req.on('data', (chunk: Buffer) => {
           size += chunk.length;
-          if (size > MAX_UPLOAD) { req.destroy(); out.destroy(); fs.rm(tmp, () => {}); }
+          if (size > hold.maxBytes) { hold.release(); req.destroy(); out.destroy(); fs.rm(tmp, () => {}); }
         });
         req.pipe(out);
         out.on('finish', () => {
-          if (size > MAX_UPLOAD) return;
+          if (size > hold.maxBytes) return;
           fs.renameSync(tmp, file);
+          hold.release(); // the file itself counts from here on
           json(res, 201, { ok: true, size });
           void storage.enqueueFlac(file);
         });
-        out.on('error', () => json(res, 500, { error: 'write failed' }));
+        out.on('error', () => { hold.release(); json(res, 500, { error: 'write failed' }); });
         return;
       }
       if (req.method === 'GET' || req.method === 'HEAD') {
@@ -272,7 +286,10 @@ wss.on('connection', (ws, req) => {
         if (room.fresh) { room.fresh = false; scheduleSave(room); }
         if (user) {
           peer.userId = user.id;
-          try { songs.touch(user.id, room.id, wasFresh ? 'owner' : 'member'); } catch (err) { console.error('song list update failed', err); }
+          try {
+            songs.touch(user.id, room.id, wasFresh ? 'owner' : 'member');
+            if (wasFresh) songs.setOwner(room.id, user.id);
+          } catch (err) { console.error('song list update failed', err); }
         }
         peer.name = String(msg.name ?? '').slice(0, 32) || user?.username || 'Guest';
         peer.color = /^#[0-9a-f]{6}$/i.test(msg.color) ? msg.color : '#888';

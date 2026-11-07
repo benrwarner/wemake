@@ -1,5 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useStudio } from './hooks';
+import { Icon } from './Icon';
+import { CollapseButton } from './Collapse';
 
 // Computer keyboard layout (like GarageBand's Musical Typing)
 const KEYMAP: Record<string, number> = { a: 0, w: 1, s: 2, e: 3, d: 4, f: 5, t: 6, g: 7, y: 8, h: 9, u: 10, j: 11, k: 12, o: 13, l: 14, p: 15, ';': 16, "'": 17 };
@@ -37,7 +39,7 @@ export function useComputerKeyboard() {
 }
 
 const WHITE = [0, 2, 4, 5, 7, 9, 11];
-export function Keyboard() {
+export function Keyboard({ collapsed = false, onToggle }: { collapsed?: boolean; onToggle?: () => void }) {
   const s = useStudio();
   const trackId = s.playTrack;
   const track = trackId ? s.snap.tracks[trackId] : undefined;
@@ -47,11 +49,28 @@ export function Keyboard() {
   const on = (n: number) => { down.current.add(n); s.noteInput(n, s.velocity, true); };
   const off = (n: number) => { if (down.current.delete(n)) s.noteInput(n, 0, false); };
   const whites = notes.filter((n) => WHITE.includes(n % 12));
+  if (collapsed) {
+    return (
+      <footer className="keyboard collapsed">
+        <button className="ghost small kb-expand" onClick={onToggle} aria-expanded={false} title="Show the keyboard">
+          <Icon name="keys" />Keyboard
+          {track && <span className="muted"><span className="tc-dot" style={{ background: track.color }} />{track.name}</span>}
+          <span className="muted small">Keys A to K still play</span>
+        </button>
+        <span className="spacer" />
+        {onToggle && <CollapseButton collapsed edge="bottom" label="keyboard" onClick={onToggle} />}
+      </footer>
+    );
+  }
   return (
     <footer className="keyboard">
       <div className="kb-info">
-        <div>{track ? <>Playing <b style={{ color: track.color }}>{track.name}</b></> : <span className="muted">Select or arm an instrument track to play</span>}</div>
-        <div className="muted small">Keys A–K play notes · Z/X octave ({s.octave - 1 >= 0 ? `C${s.octave}` : ''}) · C/V velocity {Math.round(s.velocity * 127)}{s.midiInputs.length ? ` · MIDI: ${s.midiInputs.join(', ')}` : ''}</div>
+        <div className="kb-track">{track ? <><span className="tc-dot" style={{ background: track.color }} /><b>{track.name}</b></> : <span className="muted">Select an instrument track to play</span>}</div>
+        <div className="kb-stats">
+          <span title="Octave (Z / X)"><span className="muted">Oct</span> {`C${s.octave}`}</span>
+          <span title="Velocity (C / V)"><span className="muted">Vel</span> {Math.round(s.velocity * 127)}</span>
+          {s.midiInputs.length > 0 && <span title={`MIDI: ${s.midiInputs.join(', ')}`} className="ok">MIDI</span>}
+        </div>
       </div>
       <div className="kb" onPointerLeave={() => [...down.current].forEach(off)}>
         {whites.map((n, i) => (
@@ -70,7 +89,10 @@ export function Keyboard() {
           );
         })}
       </div>
-      <button className="ghost small" onClick={() => s.panic()} title="Stop all stuck notes (Esc)">Panic</button>
+      <div className="kb-side">
+        <button className="ghost small panic" onClick={() => s.panic()} title="Stop all stuck notes (Esc)"><Icon name="stop" size={11} />Panic</button>
+        {onToggle && <CollapseButton collapsed={false} edge="bottom" label="keyboard" onClick={onToggle} />}
+      </div>
     </footer>
   );
 }

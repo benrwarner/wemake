@@ -43,6 +43,8 @@ docker exec wemake npx tsx server/admin.ts compress-takes              # convert
 ### Storage
 Takes are uploaded as WAV and re-encoded to lossless FLAC in the background (about half the size) when the `flac` command is available (the Docker image includes it). When everyone leaves a session, takes no clip uses any more and that are over an hour old are deleted. Uploads are refused while the data disk has less than `MIN_FREE_GB` free.
 
+Each account gets 5 GB for takes (`ACCOUNT_QUOTA_GB`). A song's takes count against the account that started it, whoever recorded them, so a full owner stops new takes saving in their songs; everyone sees why. Usage shows under **My songs**. Songs started while signed out have no owner and are only limited by `MIN_FREE_GB`.
+
 ### Deploying for friends on other networks
 The server is one Node process (`npm start`). Put it behind HTTPS (required for microphone access). Peer-to-peer audio uses public STUN by default. For friends behind strict NATs, add a TURN server with `TURN_URL`, `TURN_USER` and `TURN_PASS` (or `ICE_SERVERS` as JSON). `DATA_DIR` sets where sessions and takes are stored.
 
@@ -53,6 +55,7 @@ Other settings:
 - `ALLOWED_ORIGINS` (unset by default): comma-separated origins allowed to open the WebSocket, e.g. `https://wemake.example.com`. Others are closed with code 4403. Account requests (and signed-in WebSocket joins) must come from the same host or one of these origins.
 - `SIGNUP_CODE` (unset by default = sign-up closed): invite code friends need to create an account.
 - `MIN_FREE_GB` (default `5`): refuse uploads below this much free disk space.
+- `ACCOUNT_QUOTA_GB` (default `5`): take storage per account, counted across the songs it started. `0` turns the cap off.
 - `FLAC_BIN` (default `flac`): path to the FLAC encoder.
 
 ### Limits worth knowing

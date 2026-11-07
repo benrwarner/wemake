@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Meter } from './controls';
 import { useStudio } from './hooks';
+import { Icon } from './Icon';
 
 export function Settings({ onClose }: { onClose: () => void }) {
   const s = useStudio();
@@ -20,13 +21,16 @@ export function Settings({ onClose }: { onClose: () => void }) {
   const hint = e.settings.latencyHint;
   return (
     <div className="modal-back" onPointerDown={(ev) => ev.target === ev.currentTarget && onClose()}>
-      <div className="modal" role="dialog" aria-label="Audio settings">
-        <header><h2>Audio &amp; latency</h2><button className="ghost" onClick={onClose} aria-label="Close">×</button></header>
+      <div className="modal settings" role="dialog" aria-modal="true" aria-label="Audio settings">
+        <header>
+          <div className="modal-title"><h2>Settings</h2><span className="muted small">Audio, latency and session access</span></div>
+          <button className="icon-btn" onClick={onClose} aria-label="Close" autoFocus><Icon name="x" /></button>
+        </header>
 
         <PasswordSection />
 
         <section>
-          <h4>Input</h4>
+          <h4><Icon name="mic" />Input</h4>
           <div className="row">
             <select value={s.inputDevice} onChange={async (ev) => {
               s.inputDevice = ev.target.value; s.saveSettings();
@@ -48,7 +52,7 @@ export function Settings({ onClose }: { onClose: () => void }) {
         </section>
 
         <section>
-          <h4>Your latency</h4>
+          <h4><Icon name="countin" />Your latency</h4>
           <dl className="stats">
             <dt>Output</dt><dd>{(lat.output * 1000).toFixed(1)} ms</dd>
             <dt>Record round trip</dt><dd>{(lat.roundTrip * 1000).toFixed(1)} ms {e.settings.roundTripMs == null ? <span className="muted">(estimated)</span> : <span className="ok">(measured)</span>}</dd>
@@ -87,7 +91,7 @@ export function Settings({ onClose }: { onClose: () => void }) {
         </section>
 
         <section>
-          <h4>Network jam</h4>
+          <h4><Icon name="people" />Network jam</h4>
           <p className="muted small">Friends' live audio goes peer-to-peer (Opus, 256 kbps, 10 ms packets). Instruments are sent as MIDI and played on your computer, so they arrive at full quality as fast as the network allows. A smaller jitter buffer means lower delay but more dropouts.</p>
           <label className="row">Jitter buffer target
             <input type="range" min={0} max={150} step={5} value={s.jitterTarget} onChange={(ev) => s.setJitterTarget(Number(ev.target.value))} />
@@ -107,7 +111,7 @@ function PasswordSection() {
   const locked = s.session.locked;
   return (
     <section>
-      <h4>Session password {locked ? <span className="ok small">· locked</span> : <span className="muted small">· open to anyone with the link</span>}</h4>
+      <h4><Icon name="lock" />Session password {locked ? <span className="status-chip ok">Locked</span> : <span className="status-chip">Open to anyone with the link</span>}</h4>
       <p className="muted small">People already in the session stay connected. New people need the password. Share it separately from the link.</p>
       <form className="row" onSubmit={(e) => { e.preventDefault(); if (pw.length >= 4) { s.session.setPassword(pw); setPw(''); } }}>
         <input type="password" autoComplete="new-password" value={pw} minLength={4} onChange={(e) => setPw(e.target.value)} placeholder={locked ? 'New password' : 'Set a password (4+ characters)'} />

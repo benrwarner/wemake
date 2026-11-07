@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import * as account from '../net/account';
 import { useUser, type Song } from '../net/account';
+import { Icon } from './Icon';
 
 function ago(t: number) {
   const s = Math.max(0, (Date.now() - t) / 1000);
@@ -26,11 +27,11 @@ export function AccountCorner() {
     return (
       <div className="account-corner menu-wrap">
         <button className="ghost account-me" onClick={() => setMenu(!menu)} aria-expanded={menu}>
-          <span className="avatar" aria-hidden>{user.username[0]?.toUpperCase()}</span>{user.username} ▾
+          <span className="avatar" aria-hidden>{user.username[0]?.toUpperCase()}</span>{user.username}<Icon name="chevron" size={14} />
         </button>
         {menu && (
           <div className="menu" onClick={() => setMenu(false)}>
-            <button onClick={() => void account.logout().catch(() => {})}>Sign out</button>
+            <button onClick={() => void account.logout().catch(() => {})}><Icon name="logout" />Sign out</button>
           </div>
         )}
       </div>
@@ -56,12 +57,14 @@ export function AccountCorner() {
 
   return (
     <div className="account-corner">
-      <div className="row">
+      <div className="row tight">
         <button className={mode === 'login' ? 'on' : 'ghost'} onClick={() => { setMode(mode === 'login' ? null : 'login'); setError(''); }}>Sign in</button>
         <button className={mode === 'signup' ? 'on' : 'ghost'} onClick={() => { setMode(mode === 'signup' ? null : 'signup'); setError(''); }}>Create account</button>
       </div>
       {mode && (
-        <form className="account-form" onSubmit={submit}>
+        <form className="account-form popover" onSubmit={submit}>
+          <h3>{mode === 'signup' ? 'Create an account' : 'Welcome back'}</h3>
+          <p className="muted small">{mode === 'signup' ? 'Keep a list of your songs and save sounds to reuse.' : 'Sign in to see your songs and saved sounds.'}</p>
           <label>Username
             <input autoFocus value={username} autoComplete="username" maxLength={32} onChange={(e) => setUsername(e.target.value)} />
           </label>
@@ -82,15 +85,19 @@ export function AccountCorner() {
   );
 }
 
+const gb = (b: number) => (b / 1024 ** 3).toFixed(b < 1024 ** 3 ? 2 : 1).replace(/\.0+$/, '');
+
 /** The signed-in user's songs, newest first. */
 export function MySongs({ onOpen }: { onOpen: (room: string) => void }) {
   const [user] = useUser();
   const [list, setList] = useState<Song[] | null>(null);
   const [error, setError] = useState('');
+  const [usage, setUsage] = useState<{ used: number; limit: number | null } | null>(null);
   useEffect(() => {
-    if (!user) { setList(null); return; }
+    if (!user) { setList(null); setUsage(null); return; }
     let live = true;
     account.songs().then((s) => { if (live) setList(s); }, (e) => { if (live) setError(String(e.message ?? e)); });
+    account.storage().then((u) => { if (live) setUsage(u); }, () => {});
     return () => { live = false; };
   }, [user]);
   if (!user) return null;
@@ -100,7 +107,7 @@ export function MySongs({ onOpen }: { onOpen: (room: string) => void }) {
   };
   return (
     <section className="my-songs lobby-card" aria-label="My songs">
-      <h3>My songs</h3>
+      <h3>My songs {list && list.length > 0 && <span className="count">{list.length}</span>}</h3>
       {error && <div className="lobby-error">{error}</div>}
       {list && list.length === 0 && <p className="muted">Songs you start or join while signed in show up here.</p>}
       {list === null && !error && <p className="muted">Loading…</p>}
@@ -108,13 +115,19 @@ export function MySongs({ onOpen }: { onOpen: (room: string) => void }) {
         {list?.map((s) => (
           <li key={s.room}>
             <button className="ghost song-open" onClick={() => onOpen(s.room)} title={`Open ${s.room}`}>
+              <span className="song-icon" aria-hidden><Icon name="music" size={15} /></span>
               <span className="song-title">{s.title || s.room}</span>
-              <span className="muted small">{s.role === 'owner' ? 'yours' : 'joined'} · {ago(s.last_opened_at)}</span>
+              <span className="song-meta muted small">{s.role === 'owner' ? 'Started by you' : 'Joined'}, {ago(s.last_opened_at)}</span>
             </button>
-            <button className="ghost small" onClick={() => void remove(s.room)} title="Remove from my list (the song itself stays)" aria-label={`Remove ${s.title || s.room} from my list`}>Remove</button>
+            <button className="icon-btn subtle" onClick={() => void remove(s.room)} title="Remove from my list (the song itself stays)" aria-label={`Remove ${s.title || s.room} from my list`}><Icon name="x" size={14} /></button>
           </li>
         ))}
       </ul>
+      {usage?.limit && (
+        <p className="muted small storage-use" title="Recorded takes in songs you started count toward this.">
+          {gb(usage.used)} of {gb(usage.limit)} GB used{usage.used >= usage.limit ? ' — full, new takes in your songs won’t save' : ''}
+        </p>
+      )}
     </section>
   );
 }

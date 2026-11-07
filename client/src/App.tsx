@@ -3,6 +3,7 @@ import { Studio } from './state/studio';
 import { StudioContext } from './ui/hooks';
 import { Lobby } from './ui/Lobby';
 import { StudioView } from './ui/StudioView';
+import { Backdrop } from './ui/Backdrop';
 
 export function App() {
   const [studio, setStudio] = useState<Studio | null>(null);
@@ -14,7 +15,7 @@ export function App() {
     return () => { off(); studio.dispose(); };
   }, [studio]);
   if (!studio) {
-    return <Lobby error={authError} onJoin={(room, name, color, password) => {
+    return <><Backdrop /><Lobby error={authError} onJoin={(room, name, color, password) => {
       setAuthError('');
       history.replaceState(null, '', `?room=${encodeURIComponent(room)}`);
       let st: Studio;
@@ -27,7 +28,7 @@ export function App() {
       }
       if (import.meta.env.DEV) (window as unknown as { wemake: Studio }).wemake = st; // debugging handle
       setStudio(st);
-    }} />;
+    }} /></>;
   }
-  return <StudioContext.Provider value={studio}><StudioView /></StudioContext.Provider>;
+  return <><Backdrop /><StudioContext.Provider value={studio}><StudioView /></StudioContext.Provider></>;
 }

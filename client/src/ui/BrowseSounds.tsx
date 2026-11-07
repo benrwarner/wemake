@@ -6,6 +6,7 @@ import { CATEGORIES, loadCatalog, search, type CatalogItem } from '../audio/plug
 import { builtinFx, builtinInstruments, catalogTrusted, getDef, isCatalogPlugin, trustCatalog } from '../audio/plugins/registry';
 import * as account from '../net/account';
 import { useUser, type SavedSound } from '../net/account';
+import { Icon } from './Icon';
 
 type Source = 'builtin' | 'community' | 'mine';
 type Card = Omit<CatalogItem, 'id'> & { id: string; params?: Record<string, number>; saved?: SavedSound };
@@ -78,24 +79,27 @@ export function BrowseSounds({ s, t, onClose, initialKind }: { s: Studio; t: Tra
     <div className="modal-back" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="modal browse" role="dialog" aria-modal="true" aria-label="Browse sounds">
         <header>
-          <h2>Browse sounds</h2>
-          <span className="muted small">adding to <b style={{ color: t.color }}>{t.name}</b></span>
-          <button className="ghost" onClick={onClose} aria-label="Close">×</button>
+          <div className="modal-title">
+            <h2>Browse sounds</h2>
+            <span className="muted small">Adding to <span className="tc-dot" style={{ background: t.color }} /><b>{t.name}</b></span>
+          </div>
+          <button className="icon-btn" onClick={onClose} aria-label="Close"><Icon name="x" /></button>
         </header>
         <div className="browse-bar">
-          <div className="tune" role="tablist" aria-label="Source">
+          <div className="segmented" role="tablist" aria-label="Source">
             <button role="tab" aria-selected={source === 'builtin'} className={source === 'builtin' ? 'on' : ''} onClick={() => setSource('builtin')}>Built-in</button>
             <button role="tab" aria-selected={source === 'community'} className={source === 'community' ? 'on' : ''} onClick={() => setSource('community')}>Community</button>
             {user && <button role="tab" aria-selected={source === 'mine'} className={source === 'mine' ? 'on' : ''} onClick={() => setSource('mine')}>My sounds</button>}
           </div>
-          <input type="search" autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name, maker, style…" aria-label="Search sounds" />
+          <span className="search-field"><Icon name="search" />
+          <input type="search" autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name, maker, style…" aria-label="Search sounds" /></span>
         </div>
         <div className="chips" role="group" aria-label="Category">
           {CATEGORIES.map((c) => <button key={c} className={cat === c ? 'on' : ''} onClick={() => setCat(c)}>{c}</button>)}
         </div>
         {pending && (
           <div className="trust browse-trust" role="alert">
-            <p>Allow plugins from webaudiomodules.com? They run in your browser and in your friends' browsers.</p>
+            <p><Icon name="plug" />Allow plugins from webaudiomodules.com? They run in your browser and in your friends' browsers.</p>
             <div className="row">
               <button className="primary" onClick={() => { trustCatalog(); const c = pending; setPending(null); apply(c); }}>Allow</button>
               <button className="ghost" onClick={() => setPending(null)}>Cancel</button>
@@ -103,7 +107,7 @@ export function BrowseSounds({ s, t, onClose, initialKind }: { s: Studio; t: Tra
           </div>
         )}
         {error && <div className="lobby-error">{error}</div>}
-        {source === 'community' && community === null && <p className="muted">Loading the community catalog…</p>}
+        {source === 'community' && community === null && <p className="muted loading-line"><span className="spinner" />Loading the community catalog…</p>}
         {source === 'community' && community?.length === 0 && <p className="muted">Couldn't load the community catalog. Built-in sounds still work.</p>}
         {source === 'mine' && mine?.length === 0 && <p className="muted">Nothing saved yet. Use “Save sound” on an instrument or effect to keep its settings here.</p>}
         <div className="browse-grid">
@@ -120,7 +124,7 @@ function SoundCard({ c, canAdd, onAdd, onRemove, onRename }: { c: Card; canAdd: 
   const [name, setName] = useState(c.name);
   return (
     <div className="sound-card">
-      {c.thumbnail ? <img src={c.thumbnail} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" /> : <div className={`sound-icon ${c.kind}`} aria-hidden>{c.kind === 'instrument' ? '♪' : '≈'}</div>}
+      {c.thumbnail ? <img src={c.thumbnail} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" /> : <div className={`sound-icon ${c.kind}`} aria-hidden><Icon name={c.kind === 'instrument' ? 'keys' : 'sliders'} size={34} /></div>}
       <div className="sound-body">
         {editing ? (
           <form className="row" onSubmit={(e) => { e.preventDefault(); if (name.trim()) { onRename?.(name.trim()); setEditing(false); } }}>
@@ -164,7 +168,7 @@ export function SaveSound({ kind, type, defaultName, values }: { kind: 'fx' | 'i
   if (!open) {
     return (
       <button className="ghost small save-sound" onClick={() => { setName(defaultName); setState(''); setOpen(true); }} title="Save this sound and its settings to your account">
-        {state === 'saved' ? '✓ Saved' : '☆ Save sound'}
+        {state === 'saved' ? '✓ Saved' : <><Icon name="star" />Save sound</>}
       </button>
     );
   }

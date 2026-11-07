@@ -14,7 +14,7 @@ export function Mixer() {
         return (
           <div key={id} className={`strip ${s.selectedTrack === id ? 'selected' : ''}`} style={{ ['--tc' as string]: t.color }} onPointerDown={() => s.selectTrack(id)}>
             <div className="strip-name" title={t.name}>{t.name}</div>
-            <div className="strip-fx">{t.fx.filter((f) => !f.bypass).length} fx</div>
+            <div className="strip-fx">{t.fx.filter((f) => !f.bypass).length ? `${t.fx.filter((f) => !f.bypass).length} effect${t.fx.filter((f) => !f.bypass).length > 1 ? 's' : ''}` : 'No effects'}</div>
             <Knob p={PAN} value={t.pan} size={36} color={t.color} onChange={(v) => s.edit((d) => M.setTrack(d, id, { pan: Math.abs(v) < 0.03 ? 0 : v }))} />
             <div className="strip-fader">
               <Meter vertical read={() => s.meter(id)} />
@@ -24,13 +24,13 @@ export function Mixer() {
             </div>
             <div className="strip-db">{fmtDb(t.volume)}</div>
             <div className="strip-btns">
-              <button className={`msr m ${t.mute ? 'on' : ''}`} onClick={() => s.edit((d) => M.setTrack(d, id, { mute: !t.mute }))}>M</button>
-              <button className={`msr s ${t.solo ? 'on' : ''}`} onClick={() => s.edit((d) => M.setTrack(d, id, { solo: !t.solo }))}>S</button>
+              <button className={`msr m ${t.mute ? 'on' : ''}`} aria-pressed={t.mute} aria-label={`Mute ${t.name}`} title="Mute" onClick={() => s.edit((d) => M.setTrack(d, id, { mute: !t.mute }))}>M</button>
+              <button className={`msr s ${t.solo ? 'on' : ''}`} aria-pressed={t.solo} aria-label={`Solo ${t.name}`} title="Solo" onClick={() => s.edit((d) => M.setTrack(d, id, { solo: !t.solo }))}>S</button>
             </div>
           </div>
         );
       })}
-      {s.peerList().length > 0 && <div className="strip-sep">Live friends <span className="muted">(only your mix)</span></div>}
+      {s.peerList().length > 0 && <div className="strip-sep" title="These levels only change what you hear">Friends live</div>}
       {s.peerList().map((p) => {
         const db = s.peerVolume.get(p.id) ?? 0;
         return (

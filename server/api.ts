@@ -4,6 +4,7 @@ import net from 'node:net';
 import { Limiter, type Accounts, type User } from './accounts.ts';
 import type { Songs } from './songs.ts';
 import type { Sounds } from './sounds.ts';
+import type { Quota } from './quota.ts';
 
 export const COOKIE = 'wm_session';
 const MAX_AGE = 30 * 24 * 3600; // seconds
@@ -12,6 +13,7 @@ export interface ApiDeps {
   accounts: Accounts;
   songs: Songs;
   sounds: Sounds;
+  quota?: Quota;
   ip: (req: http.IncomingMessage) => string;
   allowedOrigins: string[];
   signupCode?: string;
@@ -195,6 +197,13 @@ export class Api {
       const token = parseCookies(req.headers.cookie)[COOKIE];
       if (token) accounts.logout(token);
       return send(res, 204, undefined, sessionCookie(null, req));
+    }
+
+    if (p === '/api/me/storage' && method === 'GET') {
+      const user = this.requireUser(req);
+      const q = this.deps.quota;
+      const limit = q && Number.isFinite(q.limit) ? q.limit : null;
+      return send(res, 200, { used: q ? q.used(user.id) : 0, limit });
     }
 
     if (p === '/api/me/songs' || p.startsWith('/api/me/songs/')) {

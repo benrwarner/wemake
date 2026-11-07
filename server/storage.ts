@@ -57,6 +57,27 @@ export class Storage {
     }
   }
 
+  /** Bytes on disk for a song's finished takes (uploads and encodes in progress are skipped). */
+  roomBytes(room: string): number {
+    const dir = path.join(this.audioDir, room.toLowerCase());
+    let total = 0;
+    let names: string[];
+    try {
+      names = fs.readdirSync(dir);
+    } catch {
+      return 0;
+    }
+    for (const name of names) {
+      if (name.endsWith('.part') || name.endsWith('.tmp')) continue;
+      try {
+        total += fs.statSync(path.join(dir, name)).size;
+      } catch {
+        /* vanished mid-count */
+      }
+    }
+    return total;
+  }
+
   /** Queue a WAV for FLAC encoding (one at a time, low priority). Keeps the WAV on any failure. */
   enqueueFlac(wavPath: string): Promise<void> {
     const job = this.queue.then(() => this.encode(wavPath));

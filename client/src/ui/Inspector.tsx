@@ -7,12 +7,13 @@ import { BrowseSounds, SaveSound } from './BrowseSounds';
 import { type ParamDef, resolveParams } from '../audio/plugins/types';
 import { ParamControl } from './controls';
 import { useStudio } from './hooks';
+import { Icon } from './Icon';
 
 export function Inspector() {
   const s = useStudio();
   const t = s.selectedTrack ? s.snap.tracks[s.selectedTrack] : undefined;
   const [browse, setBrowse] = useState<null | 'fx' | 'instrument'>(null);
-  if (!t) return <div className="empty">Select a track to see its instrument and effects.</div>;
+  if (!t) return <EmptyState icon="sliders" title="No track selected">Click a track on the timeline to see its instrument and effects here.</EmptyState>;
   return (
     <div className="inspector">
       {t.kind === 'instrument' && <InstrumentPanel s={s} t={t} onBrowse={() => setBrowse('instrument')} />}
@@ -28,12 +29,12 @@ function InputPanel({ s, t }: { s: Studio; t: Track }) {
   const armed = e.armedAudio === t.id;
   return (
     <section className="panel input-panel" style={{ ['--tc' as string]: t.color }}>
-      <h3>{t.name} <span className="muted">· audio</span></h3>
+      <h3><Icon name="mic" />{t.name} <span className="muted small">Audio track</span></h3>
       <p className="muted small">Arm this track to play your mic or instrument through its effects live, so friends hear it in the jam, and record takes.</p>
-      <button className={`arm-big ${armed ? 'on' : ''}`} onClick={() => s.arm(t.id)}>{armed ? '● Armed: your input is live here' : 'Arm track (R)'}</button>
+      <button className={`arm-big ${armed ? 'on' : ''}`} onClick={() => s.arm(t.id)} aria-pressed={armed}><Icon name="record" size={12} />{armed ? 'Armed: your input is live here' : 'Arm track (R)'}</button>
       <label className="check"><input type="checkbox" checked={e.settings.monitor} onChange={(ev) => { e.setMonitor(ev.target.checked); s.saveSettings(); }} /> Monitor: hear yourself through the FX</label>
       <label className="check"><input type="checkbox" checked={e.live} onChange={(ev) => s.setLive(ev.target.checked)} /> Live to room: friends hear you</label>
-      {e.hasInput && <div className="row"><span className="muted small">Input</span><MeterInline s={s} /></div>}
+      {e.hasInput ? <div className="row"><span className="muted small">Input</span><MeterInline s={s} /></div> : <p className="muted small">Your input opens when you arm the track. Choose a device in Settings.</p>}
     </section>
   );
 }
@@ -74,10 +75,10 @@ function InstrumentPanel({ s, t, onBrowse }: { s: Studio; t: Track; onBrowse: ()
           {isExternal(spec.type) && <option value={spec.type}>{def?.name ?? 'External'}</option>}
           <option value="__wam">Load WAM instrument…</option>
         </select>
-        <button className={`arm-small ${armed ? 'on' : ''}`} onClick={() => s.arm(t.id)} title="Your keyboard / MIDI controller plays this track">{armed ? '● Playing' : 'Play this'}</button>
+        <button className={`arm-small ${armed ? 'on' : ''}`} onClick={() => s.arm(t.id)} aria-pressed={armed} title="Your keyboard / MIDI controller plays this track"><Icon name={armed ? 'record' : 'keys'} size={armed ? 10 : 14} />{armed ? 'Playing' : 'Play this'}</button>
       </h3>
       <div className="row sound-actions">
-        <button className="ghost small" onClick={onBrowse}>🔍 Browse sounds</button>
+        <button className="ghost small" onClick={onBrowse}><Icon name="search" />Browse sounds</button>
         <SaveSound kind="instrument" type={spec.type} defaultName={def?.name ?? 'My sound'}
           values={async () => ({ ...spec.params, ...values, ...((await inst?.getParamValues?.().catch(() => ({}))) ?? {}) })} />
       </div>
@@ -92,7 +93,7 @@ function InstrumentPanel({ s, t, onBrowse }: { s: Studio; t: Track; onBrowse: ()
         }} />
       )}
       {!isTrusted(spec.type) && <TrustBanner type={spec.type} />}
-      {strip?.instrument?.error && strip.instrument.error !== 'untrusted' && <div className="error">⚠ {strip.instrument.error}</div>}
+      {strip?.instrument?.error && strip.instrument.error !== 'untrusted' && <div className="note error"><Icon name="alert" />{strip.instrument.error}</div>}
       {def?.presets && (
         <div className="presets">
           {def.presets.map((p, i) => (
@@ -115,7 +116,7 @@ function TrustBanner({ type }: { type: string }) {
   const url = externalUrl(type);
   return (
     <div className="trust">
-      <p>This session uses an external plugin from <b>{safeHost(type)}</b>. It runs code in your browser.</p>
+      <p><Icon name="plug" />This session uses an external plugin from <b>{safeHost(type)}</b>. It runs code in your browser.</p>
       <code>{url}</code>
       <div className="row">
         <button onClick={() => trustPlugin(type)}>Trust &amp; load</button>
@@ -140,8 +141,8 @@ function PluginGuiButton({ create }: { create: () => Promise<HTMLElement> }) {
   }, [open]);
   return (
     <>
-      <button onClick={() => setOpen(!open)}>{open ? 'Close plugin window' : 'Open plugin window'}</button>
-      {open && <div className="plugin-window"><div className="plugin-window-bar"><span>Plugin</span><button onClick={() => setOpen(false)}>×</button></div><div ref={host} /></div>}
+      <button className="small" onClick={() => setOpen(!open)}><Icon name="panel" />{open ? 'Close plugin window' : 'Open plugin window'}</button>
+      {open && <div className="plugin-window" role="dialog" aria-label="Plugin window"><div className="plugin-window-bar"><span>Plugin</span><button className="icon-btn" onClick={() => setOpen(false)} aria-label="Close plugin window"><Icon name="x" /></button></div><div ref={host} /></div>}
     </>
   );
 }
@@ -161,14 +162,14 @@ function FxRack({ s, t, onBrowse }: { s: Studio; t: Track; onBrowse: () => void 
   for (const d of builtinFx()) { const c = d.category ?? 'Other'; cats.set(c, [...(cats.get(c) ?? []), d]); }
   return (
     <section className="panel fxrack">
-      <h3>Effects <span className="muted small">· processed in order, top to bottom · shared with everyone</span></h3>
+      <h3>Effects <span className="muted small">Processed in order, shared with everyone</span></h3>
       <div className="fx-list">
-        {t.fx.length === 0 && <div className="muted small">No effects yet.</div>}
+        {t.fx.length === 0 && <div className="fx-empty muted small">No effects yet. Add reverb, delay, EQ and more.</div>}
         {t.fx.map((f, i) => <FxCard key={f.id} s={s} t={t} f={f} first={i === 0} last={i === t.fx.length - 1} />)}
         <div className="fx-add">
           <div className="row">
-            <button onClick={() => setAdding(!adding)} aria-expanded={adding}>＋ Add effect</button>
-            <button className="ghost" onClick={onBrowse}>🔍 Browse sounds</button>
+            <button className="primary-soft" onClick={() => setAdding(!adding)} aria-expanded={adding}><Icon name="plus" />Add effect</button>
+            <button className="ghost" onClick={onBrowse}><Icon name="search" />Browse sounds</button>
           </div>
           {adding && (
             <div className="fx-menu">
@@ -217,15 +218,15 @@ function FxCard({ s, t, f, first, last }: { s: Studio; t: Track; f: FxSlot; firs
   return (
     <div className={`fx-card ${f.bypass ? 'bypassed' : ''}`}>
       <div className="fx-head">
-        <button className={`power ${f.bypass ? '' : 'on'}`} onClick={() => s.edit((d) => M.setFx(d, t.id, f.id, { bypass: !f.bypass }))} title={f.bypass ? 'Enable' : 'Bypass'} aria-label="Toggle effect">⏻</button>
-        <button className="fx-name" onClick={() => setOpen(!open)}>{def?.name ?? (isExternal(f.type) ? shortPluginName(f.type) : f.type)}</button>
+        <button className={`icon-btn power ${f.bypass ? '' : 'on'}`} onClick={() => s.edit((d) => M.setFx(d, t.id, f.id, { bypass: !f.bypass }))} title={f.bypass ? 'Turn on' : 'Bypass'} aria-label="Toggle effect" aria-pressed={!f.bypass}><Icon name="power" size={14} /></button>
+        <button className="fx-name" onClick={() => setOpen(!open)} aria-expanded={open}>{def?.name ?? (isExternal(f.type) ? shortPluginName(f.type) : f.type)}<Icon name="chevron" size={12} className={`chev ${open ? '' : 'closed'}`} /></button>
         <span className="spacer" />
-        <button disabled={first} onClick={() => s.edit((d) => M.moveFx(d, t.id, f.id, -1))} aria-label="Move up">↑</button>
-        <button disabled={last} onClick={() => s.edit((d) => M.moveFx(d, t.id, f.id, 1))} aria-label="Move down">↓</button>
-        <button onClick={() => s.edit((d) => M.removeFx(d, t.id, f.id))} aria-label="Remove effect">×</button>
+        <button className="icon-btn subtle" disabled={first} onClick={() => s.edit((d) => M.moveFx(d, t.id, f.id, -1))} aria-label="Move up" title="Move earlier in the chain"><Icon name="up" size={14} /></button>
+        <button className="icon-btn subtle" disabled={last} onClick={() => s.edit((d) => M.moveFx(d, t.id, f.id, 1))} aria-label="Move down" title="Move later in the chain"><Icon name="down" size={14} /></button>
+        <button className="icon-btn subtle" onClick={() => s.edit((d) => M.removeFx(d, t.id, f.id))} aria-label="Remove effect" title="Remove effect"><Icon name="x" size={14} /></button>
       </div>
       {!isTrusted(f.type) && <TrustBanner type={f.type} />}
-      {err && err !== 'untrusted' && <div className="error">⚠ {err}</div>}
+      {err && err !== 'untrusted' && <div className="note error"><Icon name="alert" />{err}</div>}
       {open && (
         <div className="params">
           {params.map((p) => (
@@ -237,6 +238,16 @@ function FxCard({ s, t, f, first, last }: { s: Studio; t: Track; f: FxSlot; firs
             values={async () => ({ ...f.params, ...values, ...((await inst?.getParamValues?.().catch(() => ({}))) ?? {}) })} />
         </div>
       )}
+    </div>
+  );
+}
+
+export function EmptyState({ icon, title, children }: { icon: Parameters<typeof Icon>[0]['name']; title: string; children: React.ReactNode }) {
+  return (
+    <div className="empty-state">
+      <span className="es-icon"><Icon name={icon} size={20} /></span>
+      <b>{title}</b>
+      <p>{children}</p>
     </div>
   );
 }

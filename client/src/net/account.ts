@@ -75,6 +75,7 @@ export async function logout(): Promise<void> {
 }
 
 export const songs = async () => (await call<{ songs: Song[] }>('GET', '/api/me/songs')).songs;
+export const storage = () => call<{ used: number; limit: number | null }>('GET', '/api/me/storage');
 export const removeSong = (room: string) => call<void>('DELETE', `/api/me/songs/${encodeURIComponent(room)}`);
 
 export const sounds = async () => (await call<{ sounds: SavedSound[] }>('GET', '/api/me/sounds')).sounds;

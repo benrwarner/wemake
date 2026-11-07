@@ -4,6 +4,7 @@ import type { Note } from '../../../shared/model';
 import { DRUM_NAMES } from '../audio/plugins/instruments';
 import { startDrag, useFrame, useStudio } from './hooks';
 import { RemoteCursors } from './Cursors';
+import { EmptyState } from './Inspector';
 
 const ROW_H = 14;
 const KEYS_W = 64;
@@ -20,6 +21,7 @@ export function PianoRoll() {
   const [ppb, setPpb] = useState(64);
   const [grid, setGrid] = useState(0.25);
   const [len, setLen] = useState(0.25);
+  const [box, setBox] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const scroller = useRef<HTMLDivElement>(null);
   const playhead = useRef<HTMLDivElement>(null);
   const isDrums = track?.instrument?.type === 'drums';
@@ -45,7 +47,7 @@ export function PianoRoll() {
   });
 
   if (!clip || !track || clip.kind !== 'midi') {
-    return <div className="empty">Double-click a MIDI clip (or an empty spot on an instrument lane) to edit notes here. Record notes live by arming an instrument track and pressing ●.</div>;
+    return <EmptyState icon="piano" title="No clip open">Double-click a MIDI clip, or an empty spot on an instrument lane, to edit its notes here. You can also arm an instrument track and press record to play notes in live.</EmptyState>;
   }
 
   const notes = draft ?? clip.notes ?? [];
@@ -62,21 +64,36 @@ export function PianoRoll() {
   const width = clip.length * ppb;
 
   const onGridDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (e.button !== 0 || e.target !== e.currentTarget) return;
+    if (e.button === 1) {
+      // middle-drag moves around
+      e.preventDefault();
+      const sc = scroller.current!;
+      const x0 = sc.scrollLeft, y0 = sc.scrollTop;
+      startDrag(e, (dx, dy) => { sc.scrollLeft = x0 - dx; sc.scrollTop = y0 - dy; });
+      return;
+    }
+    if ((e.button !== 0 && e.button !== 2) || e.target !== e.currentTarget) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const beat = floorSnap((e.clientX - rect.left) / ppb, e.altKey);
     const p = hi - Math.floor((e.clientY - rect.top) / ROW_H);
-    if (beat < 0 || beat >= clip.length) return;
-    if (e.shiftKey) {
-      // rubber-band select
+    if (e.button === 2 || e.shiftKey) {
+      // box select (right-drag, or shift-drag); shift/cmd adds to the selection
+      e.preventDefault();
+      const additive = e.button === 2 && (e.shiftKey || e.metaKey || e.ctrlKey);
+      const base = additive ? sel : new Set<number>();
       const x0 = e.clientX - rect.left, y0 = e.clientY - rect.top;
+      let moved = false;
       startDrag(e, (dx, dy) => {
+        if (!moved && Math.abs(dx) + Math.abs(dy) < 4) return;
+        moved = true;
+        setBox({ x: Math.min(x0, x0 + dx), y: Math.min(y0, y0 + dy), w: Math.abs(dx), h: Math.abs(dy) });
         const b0 = Math.min(x0, x0 + dx) / ppb, b1 = Math.max(x0, x0 + dx) / ppb;
         const p0 = hi - Math.floor(Math.max(y0, y0 + dy) / ROW_H), p1 = hi - Math.floor(Math.min(y0, y0 + dy) / ROW_H);
-        setSel(new Set(notes.map((n, i) => (n.s + n.d > b0 && n.s < b1 && n.p >= p0 && n.p <= p1 ? i : -1)).filter((i) => i >= 0)));
-      });
+        setSel(new Set([...base, ...notes.map((n, i) => (n.s + n.d > b0 && n.s < b1 && n.p >= p0 && n.p <= p1 ? i : -1)).filter((i) => i >= 0)]));
+      }, () => { setBox(null); if (!moved && !additive) setSel(new Set()); });
       return;
     }
+    if (beat < 0 || beat >= clip.length) return;
     const note: Note = { p, s: beat, d: isDrums ? Math.max(grid || 0.25, 0.125) : len, v: s.velocity };
     const next = [...notes, note];
     const idx = next.length - 1;
@@ -131,7 +148,7 @@ export function PianoRoll() {
       }}
     >
       <div className="pr-toolbar">
-        <strong style={{ color: track.color }}>{track.name}</strong>
+        <span className="pr-track"><span className="tc-dot" style={{ background: track.color }} />{track.name}</span>
         <input className="pr-name" value={clip.name} onChange={(e) => s.edit((d) => M.setClip(d, clip.id, { name: e.target.value }))} aria-label="Clip name" />
         <label>Length
           <select value={clip.length} onChange={(e) => s.edit((d) => M.setClip(d, clip.id, { length: Number(e.target.value) }))}>
@@ -154,7 +171,7 @@ export function PianoRoll() {
         <button onClick={() => s.edit((d) => M.setProject(d, { loopOn: true, loopStart: clip.start, loopEnd: clip.start + clip.length }))} title="Cycle this clip">Loop clip</button>
         <span className="spacer" />
         <label>Zoom <input type="range" min={20} max={240} value={ppb} onChange={(e) => setPpb(Number(e.target.value))} /></label>
-        <span className="hint">Click: add · drag: move/resize · right-click: delete · ⇧-drag: select</span>
+        <span className="hint" title="Click to add a note. Drag to move or resize. Right-click a note to delete it. Right-drag to select several. Middle-drag to move around.">Click to add · right-drag to select</span>
       </div>
       <div className="pr-scroll" ref={scroller}>
         <div className="pr-inner" style={{ width: KEYS_W + width, height: rows * ROW_H }}
@@ -186,6 +203,7 @@ export function PianoRoll() {
             {Array.from({ length: rows }, (_, r) => hi - r).filter(isBlack).map((p) => (
               <div key={p} className="pr-row-black" style={{ top: (hi - p) * ROW_H, height: ROW_H }} />
             ))}
+            {box && <div className="pr-marquee" style={{ left: box.x, top: box.y, width: box.w, height: box.h }} />}
             {notes.map((n, i) => (n.p < lo || n.p > hi ? null : (
               <div key={i} className={`pr-note ${sel.has(i) ? 'sel' : ''}`}
                 style={{ left: n.s * ppb, top: (hi - n.p) * ROW_H + 1, width: Math.max(4, n.d * ppb - 1), height: ROW_H - 2, background: track.color, opacity: 0.35 + n.v * 0.65 }}

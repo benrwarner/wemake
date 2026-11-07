@@ -8,9 +8,10 @@ export class ErrorBoundary extends Component<{ children: ReactNode; label: strin
   render() {
     if (!this.state.error) return this.props.children;
     return (
-      <div className="empty">
-        Something in {this.props.label} failed to display: {this.state.error.message}{' '}
-        <button onClick={() => this.setState({ error: null })}>Retry</button>
+      <div className="empty-state" role="alert">
+        <b>Couldn't display {this.props.label}</b>
+        <p>{this.state.error.message}</p>
+        <button onClick={() => this.setState({ error: null })}>Try again</button>
       </div>
     );
   }

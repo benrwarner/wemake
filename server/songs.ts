@@ -24,6 +24,21 @@ export class Songs {
       .run(userId, room, role, room, Date.now());
   }
 
+  /** Records who started a song (first one wins). */
+  setOwner(room: string, userId: number): void {
+    this.db.sql.prepare('INSERT OR IGNORE INTO room_owners (room, user_id, created_at) VALUES (?, ?, ?)').run(room, userId, Date.now());
+  }
+
+  /** The account a song's storage counts against, if it was started by a signed-in user. */
+  ownerOf(room: string): number | null {
+    const r = this.db.sql.prepare('SELECT user_id FROM room_owners WHERE room = ?').get(room) as { user_id: number | null } | undefined;
+    return r?.user_id ?? null;
+  }
+
+  ownedRooms(userId: number): string[] {
+    return (this.db.sql.prepare('SELECT room FROM room_owners WHERE user_id = ?').all(userId) as { room: string }[]).map((r) => r.room);
+  }
+
   setTitle(room: string, title: string): void {
     this.db.sql.prepare('UPDATE user_rooms SET title = ? WHERE room = ? AND title IS NOT ?').run(title.slice(0, 120), room, title.slice(0, 120));
   }
