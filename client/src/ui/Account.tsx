@@ -125,7 +125,7 @@ export function AccountChip() {
   return (
     <span className="account-chip" title={user ? `Signed in as ${user.username}` : 'Not signed in. Sign in from the start page to keep a list of your songs and sounds.'}>
       <span className="avatar" aria-hidden>{user ? user.username[0]?.toUpperCase() : '?'}</span>
-      {user ? user.username : 'Guest'}
+      <span className="chip-name">{user ? user.username : 'Guest'}</span>
     </span>
   );
 }
