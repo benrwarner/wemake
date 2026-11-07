@@ -13,6 +13,9 @@ import * as Y from 'yjs';
 import { seedProject } from '../shared/model.ts';
 import { Auth } from './auth.ts';
 import { clientIp as resolveClientIp, parseTrust } from './clientIp.ts';
+import { Db } from './db.ts';
+import { Accounts } from './accounts.ts';
+import { Api } from './api.ts';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DATA = path.resolve(process.env.DATA_DIR ?? path.join(ROOT, 'data'));
@@ -33,6 +36,18 @@ const auth = new Auth(path.join(DATA, 'rooms'));
 
 /** Client address; forwarded headers are only honoured from trusted proxies (see server/clientIp.ts). */
 const clientIp = (req: http.IncomingMessage) => resolveClientIp(req, TRUSTED_PROXIES);
+
+// ---------------- accounts ----------------
+const db = new Db(path.join(DATA, 'wemake.db'));
+const accounts = new Accounts(db);
+const api = new Api({ accounts, ip: clientIp, allowedOrigins: ALLOWED_ORIGINS, signupCode: process.env.SIGNUP_CODE || undefined });
+const BACKUPS = path.join(DATA, 'backups');
+function backupDb() {
+  try { db.backup(BACKUPS); } catch (err) { console.error('database backup failed', err); }
+}
+setInterval(() => accounts.sweep(), 3600_000).unref();
+setInterval(backupDb, 24 * 3600_000).unref();
+setTimeout(backupDb, 60_000).unref(); // one shortly after start, so a fresh deploy has a backup
 
 function iceServers() {
   if (process.env.ICE_SERVERS) {
@@ -123,6 +138,10 @@ const server = http.createServer((req, res) => {
   const url = new URL(req.url ?? '/', 'http://x');
   const parts = url.pathname.split('/').filter(Boolean);
 
+  if (parts[0] === 'api' && (parts[1] === 'auth' || parts[1] === 'me')) {
+    void api.handle(req, res, url);
+    return;
+  }
   if (parts[0] === 'api') {
     if (parts[1] === 'time') return json(res, 200, { t: now() });
     if (parts[1] === 'config') return json(res, 200, { iceServers: iceServers() });
@@ -283,6 +302,7 @@ setInterval(() => { for (const ws of wss.clients) if (ws.readyState === WebSocke
 
 function shutdown() {
   for (const room of rooms.values()) if (!room.fresh) saveRoom(room);
+  db.close();
   process.exit(0);
 }
 process.on('SIGINT', shutdown);

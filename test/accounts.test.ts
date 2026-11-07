@@ -150,3 +150,23 @@ test('Limiter blocks after max fails and clears', () => {
   l.clear('k');
   assert.equal(l.blocked('k'), false);
 });
+
+import { parseCookies, sessionCookie } from '../server/api.ts';
+
+test('parseCookies decodes values', () => {
+  assert.deepEqual(parseCookies('a=1; wm_session=x%3D'), { a: '1', wm_session: 'x=' });
+  assert.deepEqual(parseCookies(undefined), {});
+  assert.deepEqual(parseCookies('bad; =x; y=%E0%A4%A'), { y: '%E0%A4%A' });
+});
+
+test('sessionCookie is Secure except on localhost', () => {
+  const req = (host: string) => ({ headers: { host } }) as any;
+  const pub = sessionCookie('tok', req('wemake.ben-warner.dev'));
+  assert.match(pub, /^wm_session=tok;/);
+  assert.match(pub, /; Secure/);
+  assert.match(pub, /Max-Age=2592000/);
+  assert.match(pub, /HttpOnly/);
+  assert.doesNotMatch(sessionCookie('tok', req('localhost:8787')), /Secure/);
+  assert.doesNotMatch(sessionCookie('tok', req('127.0.0.1:8787')), /Secure/);
+  assert.match(sessionCookie(null, req('localhost')), /^wm_session=; .*Max-Age=0/);
+});

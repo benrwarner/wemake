@@ -15,7 +15,7 @@ let proc: ChildProcess;
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wemake-test-'));
 
 before(async () => {
-  proc = spawn('npx', ['tsx', 'server/index.ts'], { env: { ...process.env, PORT: String(PORT), DATA_DIR: dataDir }, stdio: 'pipe' });
+  proc = spawn('npx', ['tsx', 'server/index.ts'], { env: { ...process.env, PORT: String(PORT), DATA_DIR: dataDir, SIGNUP_CODE: 'letmein' }, stdio: 'pipe' });
   for (let i = 0; i < 50; i++) {
     try { await fetch(`${BASE}/api/time`); return; } catch { await new Promise((r) => setTimeout(r, 100)); }
   }
@@ -23,9 +23,9 @@ before(async () => {
 });
 after(() => { proc.kill(); fs.rmSync(dataDir, { recursive: true, force: true }); });
 
-function client(room: string, name: string, password?: string) {
+function client(room: string, name: string, password?: string, cookie?: string) {
   const doc = new Y.Doc();
-  const ws = new WebSocket(`ws://localhost:${PORT}/ws?room=${room}`);
+  const ws = new WebSocket(`ws://localhost:${PORT}/ws?room=${room}`, cookie ? { headers: { cookie } } : undefined);
   const msgs: any[] = [];
   let synced: () => void;
   const ready = new Promise<void>((r) => { synced = r; });
@@ -202,4 +202,94 @@ test('wrong-password throttling is per client IP behind a proxy', async () => {
   assert.match((await as('198.51.100.1', 'correct-horse')).error, /Too many/);
   assert.equal((await as('198.51.100.2', 'correct-horse')).t, 'welcome', 'another user must not be locked out');
   owner.ws.close();
+});
+
+// ---------------- accounts ----------------
+let ipSeq = 1;
+const freshIp = () => `198.51.100.${(ipSeq++ % 250) + 1}`;
+async function api(p: string, opts: { method?: string; body?: unknown; cookie?: string; ip?: string; origin?: string | null; ctype?: string } = {}) {
+  const headers: Record<string, string> = { 'cf-connecting-ip': opts.ip ?? freshIp() };
+  if (opts.origin !== null) headers.origin = opts.origin ?? BASE;
+  if (opts.cookie) headers.cookie = opts.cookie;
+  if (opts.body !== undefined) headers['content-type'] = opts.ctype ?? 'application/json';
+  const res = await fetch(`${BASE}${p}`, { method: opts.method ?? (opts.body !== undefined ? 'POST' : 'GET'), headers, body: opts.body === undefined ? undefined : typeof opts.body === 'string' ? opts.body : JSON.stringify(opts.body) });
+  const text = await res.text();
+  return { status: res.status, headers: res.headers, body: text ? JSON.parse(text) : null, cookie: (res.headers.get('set-cookie') ?? '').split(';')[0] };
+}
+async function newUser(name: string, password = 'password123') {
+  const r = await api('/api/auth/signup', { body: { username: name, password, code: 'letmein' } });
+  assert.equal(r.status, 201, JSON.stringify(r.body));
+  return { cookie: r.cookie, user: r.body.user };
+}
+
+test('signup needs the invite code', async () => {
+  assert.equal((await api('/api/auth/signup', { body: { username: 'codeless', password: 'password123' } })).status, 403);
+  assert.equal((await api('/api/auth/signup', { body: { username: 'codeless', password: 'password123', code: 'nope' } })).status, 403);
+  const r = await api('/api/auth/signup', { body: { username: 'Coded', password: 'password123', code: 'letmein' } });
+  assert.equal(r.status, 201);
+  assert.deepEqual(Object.keys(r.body.user).sort(), ['id', 'username']);
+  assert.equal(r.body.user.username, 'coded');
+  const sc = r.headers.get('set-cookie') ?? '';
+  assert.match(sc, /wm_session=/);
+  assert.match(sc, /HttpOnly/i);
+  assert.match(sc, /SameSite=Lax/i);
+  assert.doesNotMatch(sc, /Secure/i);
+  const dup = await api('/api/auth/signup', { body: { username: 'coded', password: 'password123', code: 'letmein' } });
+  assert.equal(dup.status, 409);
+  assert.equal(dup.body.error, 'That username is taken');
+  assert.equal((await api('/api/auth/signup', { body: { username: 'x', password: 'password123', code: 'letmein' } })).status, 400);
+});
+
+test('login, me, logout round trip', async () => {
+  await newUser('roundtrip');
+  const me0 = await api('/api/me');
+  assert.deepEqual(me0.body, { user: null });
+  const r = await api('/api/auth/login', { body: { username: 'RoundTrip', password: 'password123' } });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.user.username, 'roundtrip');
+  const me = await api('/api/me', { cookie: r.cookie });
+  assert.equal(me.body.user.username, 'roundtrip');
+  const out = await api('/api/auth/logout', { method: 'POST', body: {}, cookie: r.cookie });
+  assert.equal(out.status, 204);
+  assert.match(out.headers.get('set-cookie') ?? '', /Max-Age=0/);
+  assert.deepEqual((await api('/api/me', { cookie: r.cookie })).body, { user: null });
+});
+
+test('wrong login copy', async () => {
+  await newUser('copytest');
+  for (const username of ['copytest', 'nosuchuser']) {
+    const r = await api('/api/auth/login', { body: { username, password: 'wrongwrong' } });
+    assert.equal(r.status, 401);
+    assert.deepEqual(r.body, { error: 'Wrong username or password' });
+  }
+});
+
+test('cross-origin POST is rejected', async () => {
+  const r = await api('/api/auth/login', { body: { username: 'a', password: 'b' }, origin: 'https://evil.example' });
+  assert.equal(r.status, 403);
+  assert.equal((await api('/api/auth/login', { body: { username: 'a', password: 'b' }, origin: null })).status, 403);
+});
+
+test('non-JSON POST is rejected', async () => {
+  const r = await api('/api/auth/login', { body: 'username=a&password=b', ctype: 'text/plain' });
+  assert.equal(r.status, 415);
+});
+
+test('login is rate limited per username', async () => {
+  await newUser('limited');
+  for (let i = 0; i < 10; i++) assert.equal((await api('/api/auth/login', { body: { username: 'limited', password: 'wrongwrong' } })).status, 401);
+  const r = await api('/api/auth/login', { body: { username: 'limited', password: 'password123' } });
+  assert.equal(r.status, 429);
+  assert.deepEqual(r.body, { error: 'Too many attempts. Try again in 15 minutes.' });
+});
+
+test('login is rate limited per IP', async () => {
+  const ip = '203.0.113.99';
+  for (let i = 0; i < 10; i++) await api('/api/auth/login', { body: { username: `who${i}`, password: 'wrongwrong' }, ip });
+  assert.equal((await api('/api/auth/login', { body: { username: 'whoever', password: 'wrongwrong' }, ip })).status, 429);
+});
+
+test('/api/me responses are no-store', async () => {
+  assert.equal((await api('/api/me')).headers.get('cache-control'), 'no-store');
+  assert.equal((await api('/api/auth/login', { body: { username: 'zz', password: 'q' } })).headers.get('cache-control'), 'no-store');
 });
