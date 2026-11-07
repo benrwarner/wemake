@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { clientIp, normalizeIp, parseTrust } from '../server/clientIp.ts';
 
 const req = (remoteAddress: string, headers: Record<string, string> = {}) => ({ socket: { remoteAddress }, headers }) as any;
-const DEFAULT = parseTrust(undefined);
-const LOOPBACK_ONLY = parseTrust('loopback');
+const DEFAULT = parseTrust('loopback,private'); // what the Docker deployment sets
+const LOOPBACK_ONLY = parseTrust(undefined); // the default
 
 test('direct connection uses the socket address', () => {
   assert.equal(clientIp(req('203.0.113.7'), DEFAULT), '203.0.113.7');
@@ -33,8 +33,9 @@ test('TRUSTED_PROXIES=loopback does not trust the Docker bridge', () => {
   assert.equal(clientIp(req('::1', { 'cf-connecting-ip': '198.51.100.20' }), LOOPBACK_ONLY), '198.51.100.20');
 });
 
-test('all-private forwarding chain falls back to the originating LAN address', () => {
-  const r = req('172.18.0.1', { 'x-forwarded-for': '192.168.1.50, 127.0.0.1' });
+test('all-private chain uses the hop our proxy appended, not the client-supplied leftmost one', () => {
+  // LAN client 192.168.1.50 sent a fake "X-Forwarded-For: 10.9.9.9"; nginx appended the real address
+  const r = req('172.18.0.1', { 'x-forwarded-for': '10.9.9.9, 192.168.1.50' });
   assert.equal(clientIp(r, DEFAULT), '192.168.1.50');
 });
 

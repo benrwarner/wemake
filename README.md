@@ -34,7 +34,7 @@ The server is one Node process (`npm start`). Put it behind HTTPS (required for 
 Other settings:
 
 - `MAX_UPLOAD_MB` (default `300`): largest take upload. Behind Cloudflare's Free plan, keep it under 100 (e.g. `95`).
-- `TRUSTED_PROXIES` (default `loopback,private`): which socket peers may supply `CF-Connecting-IP` / `X-Forwarded-For`. `private` covers Docker bridge networks; use `loopback` when the app is not in a container.
+- `TRUSTED_PROXIES` (default `loopback`): which socket peers may supply `CF-Connecting-IP` / `X-Forwarded-For`. In Docker, set `loopback,private`: every request then arrives from the bridge gateway (172.x), so without it all users share one IP and one wrong-password limit. Anyone who reaches the app through a trusted peer without passing Cloudflare (e.g. `tailscale serve`, or nginx listening on the LAN) can pick their own `CF-Connecting-IP`, so publish the port and nginx on `127.0.0.1` only.
 - `ALLOWED_ORIGINS` (unset by default): comma-separated origins allowed to open the WebSocket, e.g. `https://wemake.example.com`. Others are closed with code 4403.
 
 ### Limits worth knowing

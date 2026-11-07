@@ -40,7 +40,7 @@ export function isPrivate(raw: string): boolean {
 
 export function parseTrust(spec: string | undefined): Set<TrustSpec> {
   const out = new Set<TrustSpec>();
-  for (const part of (spec ?? 'loopback,private').split(',').map((s) => s.trim().toLowerCase())) {
+  for (const part of (spec ?? 'loopback').split(',').map((s) => s.trim().toLowerCase())) {
     if (part === 'loopback' || part === 'private') out.add(part);
     else if (part && part !== 'none') console.warn(`TRUSTED_PROXIES: ignoring unknown entry "${part}"`);
   }
@@ -61,7 +61,11 @@ function header(req: Pick<http.IncomingMessage, 'headers'>, name: string): strin
  * - Socket peer not a trusted proxy → its address; headers ignored.
  * - Trusted peer → CF-Connecting-IP (Cloudflare overwrites any client-sent value),
  *   else X-Forwarded-For walked from the right, returning the first untrusted hop.
- *   The leftmost entry is client-controlled, so it is only used when every hop is trusted.
+ *   The leftmost entries are client-controlled and are never used.
+ * Caveat: any client that can reach the app through a trusted peer *without* passing Cloudflare
+ * (e.g. via tailscale serve, or nginx listening on the LAN) can choose its CF-Connecting-IP.
+ * Keep the published port on 127.0.0.1 and nginx on 127.0.0.1 so only cloudflared and tailnet
+ * devices have that path, or set TRUSTED_PROXIES=loopback / none if that's not acceptable.
  */
 export function clientIp(req: Pick<http.IncomingMessage, 'headers' | 'socket'>, trust: Set<TrustSpec>): string {
   const remote = normalizeIp(req.socket.remoteAddress ?? '');
@@ -76,7 +80,9 @@ export function clientIp(req: Pick<http.IncomingMessage, 'headers' | 'socket'>, 
     for (let i = hops.length - 1; i >= 0; i--) {
       if (!isTrustedProxy(hops[i], trust)) return hops[i];
     }
-    if (hops.length) return hops[0]; // every hop is a trusted (private) address: the origin is on the LAN
+    // Every hop is a private address (client on the LAN). Use the entry our nearest proxy appended;
+    // anything left of it is client-controlled and would let one client rotate rate-limit buckets.
+    if (hops.length) return hops[hops.length - 1];
   }
   return remote;
 }
