@@ -6,6 +6,9 @@ import { CollapseButton } from './Collapse';
 // Computer keyboard layout (like GarageBand's Musical Typing)
 const KEYMAP: Record<string, number> = { a: 0, w: 1, s: 2, e: 3, d: 4, f: 5, t: 6, g: 7, y: 8, h: 9, u: 10, j: 11, k: 12, o: 13, l: 14, p: 15, ';': 16, "'": 17 };
 
+// semitone above the current octave's C → the computer key that plays it
+const KEY_LABEL: Record<number, string> = Object.fromEntries(Object.entries(KEYMAP).map(([k, n]) => [n, k.toUpperCase()]));
+
 export function useComputerKeyboard() {
   const s = useStudio();
   const held = useRef(new Map<string, number>());
@@ -77,6 +80,7 @@ export function Keyboard({ collapsed = false, onToggle }: { collapsed?: boolean;
           <div key={n} className="kb-white" style={{ left: `${(i / whites.length) * 100}%`, width: `${100 / whites.length}%` }}
             onPointerDown={(e) => { (e.target as Element).releasePointerCapture?.(e.pointerId); on(n); }}
             onPointerUp={() => off(n)} onPointerEnter={(e) => e.buttons && on(n)} onPointerLeave={() => off(n)}>
+            {KEY_LABEL[n - base] && <kbd className="kb-key" aria-hidden>{KEY_LABEL[n - base]}</kbd>}
             {n % 12 === 0 && <span>C{Math.floor(n / 12) - 1}</span>}
           </div>
         ))}
@@ -85,7 +89,9 @@ export function Keyboard({ collapsed = false, onToggle }: { collapsed?: boolean;
           return (
             <div key={n} className="kb-black" style={{ left: `calc(${(wi / whites.length) * 100}% - ${50 / whites.length * 0.6}%)`, width: `${(100 / whites.length) * 0.6}%` }}
               onPointerDown={(e) => { (e.target as Element).releasePointerCapture?.(e.pointerId); on(n); }}
-              onPointerUp={() => off(n)} onPointerEnter={(e) => e.buttons && on(n)} onPointerLeave={() => off(n)} />
+              onPointerUp={() => off(n)} onPointerEnter={(e) => e.buttons && on(n)} onPointerLeave={() => off(n)}>
+              {KEY_LABEL[n - base] && <kbd className="kb-key" aria-hidden>{KEY_LABEL[n - base]}</kbd>}
+            </div>
           );
         })}
       </div>
