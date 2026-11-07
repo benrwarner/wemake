@@ -34,6 +34,13 @@ export class Songs {
       .all(userId) as unknown as SongRow[];
   }
 
+  /** After a password change: forget the song for members who aren't in the room right now. */
+  dropAbsentMembers(room: string, presentUserIds: number[]): void {
+    const keep = presentUserIds.filter(Number.isInteger);
+    const notPresent = keep.length ? ` AND user_id NOT IN (${keep.map(() => '?').join(',')})` : '';
+    this.db.sql.prepare(`DELETE FROM user_rooms WHERE room = ? AND role = 'member'${notPresent}`).run(room, ...keep);
+  }
+
   remove(userId: number, room: string): void {
     this.db.sql.prepare('DELETE FROM user_rooms WHERE user_id = ? AND room = ?').run(userId, room);
   }

@@ -15,8 +15,9 @@ import { Auth } from './auth.ts';
 import { clientIp as resolveClientIp, parseTrust } from './clientIp.ts';
 import { Db } from './db.ts';
 import { Accounts } from './accounts.ts';
-import { Api, currentUser } from './api.ts';
+import { Api, currentUser, originAllowed } from './api.ts';
 import { Songs } from './songs.ts';
+import { Sounds } from './sounds.ts';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DATA = path.resolve(process.env.DATA_DIR ?? path.join(ROOT, 'data'));
@@ -42,7 +43,8 @@ const clientIp = (req: http.IncomingMessage) => resolveClientIp(req, TRUSTED_PRO
 const db = new Db(path.join(DATA, 'wemake.db'));
 const accounts = new Accounts(db);
 const songs = new Songs(db);
-const api = new Api({ accounts, songs, ip: clientIp, allowedOrigins: ALLOWED_ORIGINS, signupCode: process.env.SIGNUP_CODE || undefined });
+const sounds = new Sounds(db);
+const api = new Api({ accounts, songs, sounds, ip: clientIp, allowedOrigins: ALLOWED_ORIGINS, signupCode: process.env.SIGNUP_CODE || undefined });
 const BACKUPS = path.join(DATA, 'backups');
 function backupDb() {
   try { db.backup(BACKUPS); } catch (err) { console.error('database backup failed', err); }
@@ -61,7 +63,7 @@ function iceServers() {
 }
 
 // ---------------- rooms ----------------
-interface Peer { id: string; ws: WebSocket; name: string; color: string; state: Record<string, unknown> }
+interface Peer { id: string; ws: WebSocket; name: string; color: string; state: Record<string, unknown>; userId?: number }
 interface Room { id: string; doc: Y.Doc; peers: Map<string, Peer>; conns: number; fresh: boolean; saveTimer?: NodeJS.Timeout }
 const rooms = new Map<string, Room>();
 
@@ -218,7 +220,8 @@ wss.on('connection', (ws, req) => {
 
   const ip = clientIp(req);
   let user: ReturnType<typeof currentUser> = null;
-  try { user = currentUser(req, accounts); } catch (err) { console.error('session lookup failed', err); }
+  // The cookie is ambient, so only trust it from our own pages (blocks cross-site WebSocket hijacking).
+  if (originAllowed(req, ALLOWED_ORIGINS)) try { user = currentUser(req, accounts); } catch (err) { console.error('session lookup failed', err); }
   // Nothing about the session is sent until the client has said hello (and passed the password check).
   const helloTimer = setTimeout(() => { if (!joined) ws.close(4408, 'hello timeout'); }, 15_000);
 
@@ -250,6 +253,7 @@ wss.on('connection', (ws, req) => {
         const wasFresh = room.fresh;
         if (room.fresh) { room.fresh = false; scheduleSave(room); }
         if (user) {
+          peer.userId = user.id;
           try { songs.touch(user.id, room.id, wasFresh ? 'owner' : 'member'); } catch (err) { console.error('song list update failed', err); }
         }
         peer.name = String(msg.name ?? '').slice(0, 32) || user?.username || 'Guest';
@@ -268,6 +272,8 @@ wss.on('connection', (ws, req) => {
           const bad = Auth.validate(msg.password);
           if (bad) return send(ws, { t: 'room', locked: auth.isLocked(room.id), error: bad });
           auth.setPassword(room.id, msg.password);
+          const present = [...room.peers.values()].map((p) => p.userId).filter((id): id is number => id != null);
+          try { songs.dropAbsentMembers(room.id, present); } catch (err) { console.error('song list update failed', err); }
         }
         return broadcast(room, { t: 'room', locked: auth.isLocked(room.id), by: peer.name });
       }

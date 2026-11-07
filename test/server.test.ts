@@ -23,9 +23,9 @@ before(async () => {
 });
 after(() => { proc.kill(); fs.rmSync(dataDir, { recursive: true, force: true }); });
 
-function client(room: string, name: string, password?: string, cookie?: string) {
+function client(room: string, name: string, password?: string, cookie?: string, origin: string = BASE) {
   const doc = new Y.Doc();
-  const ws = new WebSocket(`ws://localhost:${PORT}/ws?room=${room}`, cookie ? { headers: { cookie } } : undefined);
+  const ws = new WebSocket(`ws://localhost:${PORT}/ws?room=${room}`, cookie ? { headers: { cookie, origin } } : undefined);
   const msgs: any[] = [];
   let synced: () => void;
   const ready = new Promise<void>((r) => { synced = r; });
@@ -275,12 +275,20 @@ test('non-JSON POST is rejected', async () => {
   assert.equal(r.status, 415);
 });
 
-test('login is rate limited per username', async () => {
+test('login is rate limited per username and IP, without locking the real user out', async () => {
   await newUser('limited');
-  for (let i = 0; i < 10; i++) assert.equal((await api('/api/auth/login', { body: { username: 'limited', password: 'wrongwrong' } })).status, 401);
-  const r = await api('/api/auth/login', { body: { username: 'limited', password: 'password123' } });
+  const attacker = '203.0.113.50';
+  for (let i = 0; i < 10; i++) assert.equal((await api('/api/auth/login', { body: { username: 'limited', password: 'wrongwrong' }, ip: attacker })).status, 401);
+  const r = await api('/api/auth/login', { body: { username: 'limited', password: 'password123' }, ip: attacker });
   assert.equal(r.status, 429);
   assert.deepEqual(r.body, { error: 'Too many attempts. Try again in 15 minutes.' });
+  assert.equal((await api('/api/auth/login', { body: { username: 'limited', password: 'password123' } })).status, 200, 'owner on another IP still signs in');
+});
+
+test('guesses spread over many IPs hit a per-username cap', async () => {
+  await newUser('spread');
+  for (let i = 0; i < 50; i++) await api('/api/auth/login', { body: { username: 'spread', password: 'wrongwrong' } });
+  assert.equal((await api('/api/auth/login', { body: { username: 'spread', password: 'password123' } })).status, 429);
 });
 
 test('login is rate limited per IP', async () => {
@@ -357,4 +365,91 @@ test('stale cookie joins as guest', async () => {
 test('songs API requires sign-in', async () => {
   assert.equal((await api('/api/me/songs')).status, 401);
   assert.equal((await api('/api/me/songs/x', { method: 'DELETE' })).status, 401);
+});
+
+// ---------------- saved sounds ----------------
+test('sounds CRUD round trip', async () => {
+  const u = await newUser('sounder');
+  assert.deepEqual((await api('/api/me/sounds', { cookie: u.cookie })).body, { sounds: [] });
+  const add = await api('/api/me/sounds', { cookie: u.cookie, body: { name: '  Big Room  ', kind: 'fx', plugin_type: 'reverb', params: { mix: 0.4, decay: 3 } } });
+  assert.equal(add.status, 201);
+  const s = add.body.sound;
+  assert.equal(s.name, 'Big Room');
+  assert.equal(s.kind, 'fx');
+  assert.equal(s.plugin_type, 'reverb');
+  assert.deepEqual(s.params, { mix: 0.4, decay: 3 });
+  assert.equal(typeof s.id, 'string');
+  assert.equal(typeof s.created_at, 'number');
+  const ren = await api(`/api/me/sounds/${s.id}`, { method: 'PATCH', cookie: u.cookie, body: { name: 'Hall' } });
+  assert.equal(ren.status, 204);
+  const list = (await api('/api/me/sounds', { cookie: u.cookie })).body.sounds;
+  assert.equal(list.length, 1);
+  assert.equal(list[0].name, 'Hall');
+  assert.deepEqual(list[0].params, { mix: 0.4, decay: 3 });
+  assert.equal((await api(`/api/me/sounds/${s.id}`, { method: 'DELETE', cookie: u.cookie })).status, 204);
+  assert.deepEqual((await api('/api/me/sounds', { cookie: u.cookie })).body.sounds, []);
+  assert.equal((await api('/api/me/sounds')).status, 401);
+});
+
+test("one user cannot see or delete another user's sound", async () => {
+  const a = await newUser('owner1');
+  const b = await newUser('thief1');
+  const s = (await api('/api/me/sounds', { cookie: a.cookie, body: { name: 'Mine', kind: 'instrument', plugin_type: 'synth', params: {} } })).body.sound;
+  assert.deepEqual((await api('/api/me/sounds', { cookie: b.cookie })).body.sounds, []);
+  assert.equal((await api(`/api/me/sounds/${s.id}`, { method: 'DELETE', cookie: b.cookie })).status, 404);
+  assert.equal((await api(`/api/me/sounds/${s.id}`, { method: 'PATCH', cookie: b.cookie, body: { name: 'Stolen' } })).status, 404);
+  assert.equal((await api('/api/me/sounds', { cookie: a.cookie })).body.sounds[0].name, 'Mine');
+});
+
+test('bad sound payloads are rejected', async () => {
+  const u = await newUser('badpayload');
+  const ok = { name: 'n', kind: 'fx', plugin_type: 'reverb', params: { mix: 1 } };
+  const bad = [
+    { ...ok, params: { mix: 'loud' } },
+    { ...ok, params: { mix: null } },
+    { ...ok, params: [1, 2] },
+    { ...ok, name: 'x'.repeat(65) },
+    { ...ok, name: '   ' },
+    { ...ok, kind: 'video' },
+    { ...ok, plugin_type: '' },
+    { ...ok, plugin_type: 'x'.repeat(2049) },
+    { ...ok, params: Object.fromEntries(Array.from({ length: 1200 }, (_, i) => [`param_${i}`, i])) }, // > 16 KB
+  ];
+  for (const body of bad) {
+    const r = await api('/api/me/sounds', { cookie: u.cookie, body });
+    assert.equal(r.status, r.status === 413 ? 413 : 400, JSON.stringify(body).slice(0, 80));
+    assert.ok(r.body.error);
+  }
+  assert.equal((await api('/api/me/sounds', { cookie: u.cookie })).body.sounds.length, 0);
+});
+
+test('a cross-site page cannot join as the signed-in user', async () => {
+  const u = await newUser('hijackme');
+  const c = client('itest-xsite', '', undefined, u.cookie, 'https://evil.example');
+  await c.ready;
+  const w = await c.waitFor((m) => m.t === 'welcome');
+  assert.ok(w);
+  c.ws.close();
+  await new Promise((r) => setTimeout(r, 200));
+  assert.deepEqual((await api('/api/me/songs', { cookie: u.cookie })).body.songs, []);
+});
+
+test('locking a song drops absent members from its list', async () => {
+  const owner = await newUser('lockowner');
+  const old = await newUser('lockformer');
+  const stay = await newUser('lockstayer');
+  const a = client('itest-lockdrop', 'o', undefined, owner.cookie);
+  await a.ready;
+  const b = client('itest-lockdrop', 'f', undefined, old.cookie);
+  await b.ready;
+  b.ws.close();
+  const c = client('itest-lockdrop', 's', undefined, stay.cookie);
+  await c.ready;
+  await waitUntil(async () => (await api('/api/me/songs', { cookie: old.cookie })).body.songs.length === 1);
+  a.ws.send(JSON.stringify({ t: 'set-password', password: 'secret123' }));
+  await a.waitFor((m) => m.t === 'room' && m.locked);
+  await waitUntil(async () => (await api('/api/me/songs', { cookie: old.cookie })).body.songs.length === 0);
+  assert.equal((await api('/api/me/songs', { cookie: stay.cookie })).body.songs.length, 1, 'connected member keeps it');
+  assert.equal((await api('/api/me/songs', { cookie: owner.cookie })).body.songs.length, 1, 'owner keeps it');
+  a.ws.close(); c.ws.close();
 });

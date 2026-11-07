@@ -2,6 +2,7 @@
 import type http from 'node:http';
 import { Limiter, type Accounts, type User } from './accounts.ts';
 import type { Songs } from './songs.ts';
+import type { Sounds } from './sounds.ts';
 
 export const COOKIE = 'wm_session';
 const MAX_AGE = 30 * 24 * 3600; // seconds
@@ -9,6 +10,7 @@ const MAX_AGE = 30 * 24 * 3600; // seconds
 export interface ApiDeps {
   accounts: Accounts;
   songs: Songs;
+  sounds: Sounds;
   ip: (req: http.IncomingMessage) => string;
   allowedOrigins: string[];
   signupCode?: string;
@@ -102,7 +104,10 @@ const str = (v: unknown) => (typeof v === 'string' ? v : '');
 
 export class Api {
   private ipLimit = new Limiter(10, 15 * 60_000);
-  private userLimit = new Limiter(10, 15 * 60_000);
+  // Per (username, IP) so a stranger can't lock a friend out; a looser per-username cap slows
+  // guesses spread across many addresses.
+  private userIpLimit = new Limiter(10, 15 * 60_000);
+  private userLimit = new Limiter(50, 15 * 60_000);
 
   constructor(private deps: ApiDeps) {}
 
@@ -155,14 +160,16 @@ export class Api {
       const ip = this.deps.ip(req);
       const body = (await readJson(req)) as Record<string, unknown>;
       const userKey = str(body.username).toLowerCase().slice(0, 64);
-      if (this.ipLimit.blocked(ip) || this.userLimit.blocked(userKey)) throw new HttpError(429, TOO_MANY);
+      const pairKey = `${userKey}|${ip}`;
+      if (this.ipLimit.blocked(ip) || this.userIpLimit.blocked(pairKey) || this.userLimit.blocked(userKey)) throw new HttpError(429, TOO_MANY);
       const user = accounts.login(str(body.username), str(body.password));
       if (!user) {
         this.ipLimit.fail(ip);
+        this.userIpLimit.fail(pairKey);
         this.userLimit.fail(userKey);
         throw new HttpError(401, 'Wrong username or password');
       }
-      this.userLimit.clear(userKey);
+      this.userIpLimit.clear(pairKey);
       return send(res, 200, { user }, sessionCookie(accounts.createSession(user.id), req));
     }
 
@@ -180,6 +187,32 @@ export class Api {
         if (!ROOM_RE.test(room)) throw new HttpError(400, 'Bad song id');
         this.deps.songs.remove(user.id, room.toLowerCase());
         return send(res, 204);
+      }
+    }
+
+    if (p === '/api/me/sounds' || p.startsWith('/api/me/sounds/')) {
+      const user = this.requireUser(req);
+      const { sounds } = this.deps;
+      if (p === '/api/me/sounds') {
+        if (method === 'GET') return send(res, 200, { sounds: sounds.list(user.id) });
+        if (method === 'POST') {
+          const r = sounds.add(user.id, (await readJson(req)) as Record<string, unknown>);
+          if ('error' in r) throw new HttpError(r.error.startsWith('You can save') ? 409 : 400, r.error);
+          return send(res, 201, { sound: r });
+        }
+      } else {
+        const id = p.slice('/api/me/sounds/'.length);
+        if (method === 'DELETE') {
+          if (!sounds.remove(user.id, id)) throw new HttpError(404, 'Not found');
+          return send(res, 204);
+        }
+        if (method === 'PATCH') {
+          const body = (await readJson(req)) as Record<string, unknown>;
+          const r = sounds.rename(user.id, id, body.name);
+          if (r === 'invalid') throw new HttpError(400, 'Names are 1–64 characters');
+          if (!r) throw new HttpError(404, 'Not found');
+          return send(res, 204);
+        }
       }
     }
 

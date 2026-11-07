@@ -170,3 +170,19 @@ test('sessionCookie is Secure except on localhost', () => {
   assert.doesNotMatch(sessionCookie('tok', req('127.0.0.1:8787')), /Secure/);
   assert.match(sessionCookie(null, req('localhost')), /^wm_session=; .*Max-Age=0/);
 });
+
+import { Songs } from '../server/songs.ts';
+
+test('dropAbsentMembers with nobody signed in present drops every member but keeps owners', () => {
+  const { acc, db } = setup();
+  const songs = new Songs(db);
+  const o = acc.signup('owner', 'password1') as { id: number };
+  const m = acc.signup('member', 'password1') as { id: number };
+  songs.touch(o.id, 'r', 'owner');
+  songs.touch(m.id, 'r', 'member');
+  songs.touch(m.id, 'other', 'member');
+  songs.dropAbsentMembers('r', []);
+  assert.equal(songs.list(o.id).length, 1);
+  assert.deepEqual(songs.list(m.id).map((s) => s.room), ['other']);
+  db.close();
+});
