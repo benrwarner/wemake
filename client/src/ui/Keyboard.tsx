@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useStudio } from './hooks';
 import { Icon } from './Icon';
 import { CollapseButton } from './Collapse';
@@ -42,12 +42,77 @@ export function useComputerKeyboard() {
 }
 
 const WHITE = [0, 2, 4, 5, 7, 9, 11];
+const SPAN = 25; // notes on the on-screen keyboard
+const LOW = 21; // A0
+const HIGH = 108; // C8
+const isWhite = (n: number) => WHITE.includes(((n % 12) + 12) % 12);
+/** Left edge of note n, in white-key widths from A0 (black keys sit on the boundary). */
+function keyX(n: number): number {
+  let x = 0;
+  for (let m = LOW; m < n; m++) if (isWhite(m)) x++;
+  for (let m = n; m < LOW; m++) if (isWhite(m)) x--;
+  return isWhite(n) ? x : x - 0.3;
+}
+const WIDTH = keyX(HIGH) + 1;
+
+/** Thin whole-piano strip with a draggable window marking which notes the keyboard below shows. */
+function PianoMap() {
+  const s = useStudio();
+  const ref = useRef<SVGSVGElement>(null);
+  const grab = useRef<number | null>(null); // where in the window (white keys) the drag started
+  const [dragging, setDragging] = useState(false);
+  const base = (s.octave + 1) * 12;
+  const x0 = keyX(base);
+  const x1 = keyX(base + SPAN - 1) + 1;
+  const setOctave = (o: number) => {
+    const next = Math.max(0, Math.min(8, o));
+    if (next !== s.octave) { s.octave = next; s.bump(); }
+  };
+  const toX = (clientX: number) => {
+    const r = ref.current!.getBoundingClientRect();
+    return ((clientX - r.left) / r.width) * WIDTH;
+  };
+  // the C whose window-left lands nearest x
+  const octaveAt = (x: number) => {
+    let best = s.octave, dist = Infinity;
+    for (let o = 0; o <= 8; o++) { const d = Math.abs(keyX((o + 1) * 12) - x); if (d < dist) { dist = d; best = o; } }
+    return best;
+  };
+  const whites: number[] = [], blacks: number[] = [];
+  const out = (n: number) => n < base || n >= base + SPAN; // not on the keyboard below
+  for (let n = LOW; n <= HIGH; n++) (isWhite(n) ? whites : blacks).push(n);
+  return (
+    <svg ref={ref} className={`kb-map${dragging ? ' dragging' : ''}`} viewBox={`0 0 ${WIDTH} 6`} preserveAspectRatio="none"
+      role="slider" tabIndex={0} aria-label="Keyboard range" aria-valuemin={0} aria-valuemax={8} aria-valuenow={s.octave}
+      aria-valuetext={`C${s.octave} to C${s.octave + 2}`}
+      onKeyDown={(e) => {
+        if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') { e.preventDefault(); setOctave(s.octave - 1); }
+        if (e.key === 'ArrowRight' || e.key === 'ArrowUp') { e.preventDefault(); setOctave(s.octave + 1); }
+      }}
+      onPointerDown={(e) => {
+        const x = toX(e.clientX);
+        // grabbing the window keeps its offset; clicking elsewhere centres it on the click
+        grab.current = x >= x0 && x <= x1 ? x - x0 : (x1 - x0) / 2;
+        e.currentTarget.setPointerCapture(e.pointerId);
+        setDragging(true);
+        setOctave(octaveAt(x - grab.current));
+      }}
+      onPointerMove={(e) => { if (grab.current != null) setOctave(octaveAt(toX(e.clientX) - grab.current)); }}
+      onPointerUp={() => { grab.current = null; setDragging(false); }}
+      onPointerCancel={() => { grab.current = null; setDragging(false); }}>
+      <title>{`Showing C${s.octave}–C${s.octave + 2}. Drag to move (or Z / X).`}</title>
+      {whites.map((n) => <rect key={n} className={`w${out(n) ? ' out' : ''}`} x={keyX(n) + 0.06} y={0} width={0.88} height={6} />)}
+      {blacks.map((n) => <rect key={n} className={`b${out(n) ? ' out' : ''}`} x={keyX(n)} y={0} width={0.6} height={3.6} />)}
+      <rect className="win" x={Math.max(0, x0)} y={0} width={Math.min(WIDTH, x1) - Math.max(0, x0)} height={6} />
+    </svg>
+  );
+}
 export function Keyboard({ collapsed = false, onToggle }: { collapsed?: boolean; onToggle?: () => void }) {
   const s = useStudio();
   const trackId = s.playTrack;
   const track = trackId ? s.snap.tracks[trackId] : undefined;
   const base = (s.octave + 1) * 12;
-  const notes = Array.from({ length: 25 }, (_, i) => base + i);
+  const notes = Array.from({ length: SPAN }, (_, i) => base + i);
   const down = useRef(new Set<number>());
   const on = (n: number) => { down.current.add(n); s.noteInput(n, s.velocity, true); };
   const off = (n: number) => { if (down.current.delete(n)) s.noteInput(n, 0, false); };
@@ -75,6 +140,8 @@ export function Keyboard({ collapsed = false, onToggle }: { collapsed?: boolean;
           {s.midiInputs.length > 0 && <span title={`MIDI: ${s.midiInputs.join(', ')}`} className="ok">MIDI</span>}
         </div>
       </div>
+      <div className="kb-col">
+      <PianoMap />
       <div className="kb" onPointerLeave={() => [...down.current].forEach(off)}>
         {whites.map((n, i) => (
           <div key={n} className="kb-white" style={{ left: `${(i / whites.length) * 100}%`, width: `${100 / whites.length}%` }}
@@ -94,6 +161,7 @@ export function Keyboard({ collapsed = false, onToggle }: { collapsed?: boolean;
             </div>
           );
         })}
+      </div>
       </div>
       <div className="kb-side">
         <button className="ghost small panic" onClick={() => s.panic()} title="Stop all stuck notes (Esc)"><Icon name="stop" size={11} />Panic</button>
