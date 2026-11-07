@@ -3,10 +3,13 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import type * as Y from 'yjs';
+import * as Y from 'yjs';
 import { snapshot } from '../shared/model.ts';
 
 const GRACE_MS = 3600_000; // takes younger than this are never collected
+// Clients keep their undo history across reconnects, so only clean a song once it has been
+// closed this long; otherwise "undo delete clip" after a dropped connection could point at nothing.
+const IDLE_MS = 24 * 3600_000;
 const ENCODE_TIMEOUT_MS = 10 * 60_000;
 
 export function freeBytes(dir: string): number {
@@ -64,7 +67,8 @@ export class Storage {
   private async encode(wavPath: string): Promise<void> {
     const flacPath = wavPath.replace(/\.wav$/, '.flac');
     if (flacPath === wavPath || !fs.existsSync(wavPath) || fs.existsSync(flacPath)) return;
-    const tmp = `${flacPath}.tmp`;
+    // unique per encoder: the server and `admin.ts compress-takes` may race on the same take
+    const tmp = `${flacPath}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
     const ok =
       (await run('nice', ['-n', '10', this.flacBin, '-8', '--silent', '-f', '-o', tmp, wavPath])) &&
       (await run('nice', ['-n', '10', this.flacBin, '-t', '--silent', tmp]));
@@ -81,6 +85,36 @@ export class Storage {
     if (fs.existsSync(`${base}.flac`)) return { file: `${base}.flac`, type: 'audio/flac' };
     if (fs.existsSync(`${base}.wav`)) return { file: `${base}.wav`, type: 'audio/wav' };
     return null;
+  }
+
+  /**
+   * Cleans every song that isn't open and hasn't been saved for a day. Songs with no saved
+   * document are left alone. Returns what was deleted, per room.
+   */
+  collectIdle(roomsDir: string, isOpen: (room: string) => boolean, now = Date.now()): { room: string; deleted: string[] }[] {
+    const out: { room: string; deleted: string[] }[] = [];
+    let rooms: string[];
+    try {
+      rooms = fs.readdirSync(this.audioDir);
+    } catch {
+      return out;
+    }
+    for (const room of rooms.sort()) {
+      if (isOpen(room)) continue;
+      const file = path.join(roomsDir, `${room}.ybin`);
+      try {
+        if (fs.statSync(file).mtimeMs > now - IDLE_MS) continue;
+        const doc = new Y.Doc();
+        Y.applyUpdate(doc, fs.readFileSync(file));
+        const refs = referencedAudioIds(doc);
+        doc.destroy();
+        const deleted = this.collect(room, refs, now);
+        if (deleted.length) out.push({ room, deleted });
+      } catch {
+        /* no saved song, or unreadable: keep its takes */
+      }
+    }
+    return out;
   }
 
   /** Deletes takes in a room that no clip references and that are older than an hour. Returns deleted ids. */

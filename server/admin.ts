@@ -50,7 +50,7 @@ async function main() {
         return;
       case 'reset-password': {
         if (!arg) fail('usage: reset-password <username>');
-        const pw = accounts.resetPassword(arg);
+        const pw = await accounts.resetPassword(arg);
         if (!pw) fail(`No user called ${arg}`);
         console.log(`New password for ${arg.toLowerCase()}: ${pw}`);
         return;

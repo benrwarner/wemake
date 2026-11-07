@@ -75,3 +75,12 @@ test('matchesCategory understands combined built-in categories', () => {
   assert.equal(matchesCategory(item('Dynamics'), null), true);
   assert.equal(matchesCategory(item('Dynamics'), 'All'), true);
 });
+
+import { isAllowedCatalogUrl } from '../client/src/audio/plugins/catalog.ts';
+
+test('catalog trust covers only the vetted plugin files', () => {
+  assert.equal(isAllowedCatalogUrl(`${CATALOG_BASE}wimmics/BigMuff/index.js`), true);
+  assert.equal(isAllowedCatalogUrl(`${CATALOG_BASE}wimmics/SRVisualizers/dist/livegain/index.js`), false, 'not allowlisted');
+  assert.equal(isAllowedCatalogUrl(`${CATALOG_BASE}someone-new/evil/index.js`), false, 'new upload under the prefix');
+  assert.equal(isAllowedCatalogUrl(`${CATALOG_BASE}wimmics/BigMuff/../x.js`), false);
+});

@@ -63,7 +63,7 @@ async function curate() {
     };
     const out = [];
     for (const item of items) {
-      const r = { id: item.id, name: item.name, kind: item.kind, category: item.category, loaded: false, passesAudio: false, error: '' };
+      const r = { id: item.id, path: item.type.slice(4 + cat.CATALOG_BASE.length), name: item.name, kind: item.kind, category: item.category, loaded: false, passesAudio: false, error: '' };
       try {
         if (item.kind === 'instrument') {
           window.__setInstrument(keys.id, item.type);
@@ -188,14 +188,15 @@ context.on('page', (p) => p.on('load', () => p.evaluate(async (root) => { window
 if (!args.has('--smoke') || args.has('--write')) {
   const results = await curate();
   console.table(results.map(({ id, kind, category, loaded, passesAudio, peak, error }) => ({ id, kind, category, loaded, passesAudio, peak: peak?.toFixed(4), error: error.slice(0, 60) })));
-  const ok = results.filter((r) => r.loaded && r.passesAudio && !EXCLUDE_CATEGORIES.has(r.category) && !EXCLUDE_IDS.has(r.id)).map((r) => r.id);
+  const ok = results.filter((r) => r.loaded && r.passesAudio && !EXCLUDE_CATEGORIES.has(r.category) && !EXCLUDE_IDS.has(r.id)).map((r) => [r.id, r.path]);
   console.log(`${ok.length}/${results.length} pass`);
   if (args.has('--write')) {
     const file = path.join(ROOT, 'client/src/audio/plugins/catalog-allow.ts');
     fs.writeFileSync(file, `// WAM Community catalog entries that load and pass audio in WeMake.
 // Regenerate with scripts/check-catalog.mjs (see its header for how to run it). Checked ${new Date().toISOString().slice(0, 10)}.
-export const CATALOG_ALLOW = new Set<string>([
-${ok.map((id) => `  '${id}',`).join('\n')}
+// identifier → plugin path; one-click catalog trust covers exactly these files.
+export const CATALOG_ALLOW = new Map<string, string>([
+${ok.map(([id, p]) => `  ['${id}', '${p}'],`).join('\n')}
 ]);
 `);
     console.log(`wrote ${file}`);

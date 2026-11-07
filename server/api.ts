@@ -1,5 +1,6 @@
 // JSON API for accounts, "My songs" and saved sounds (/api/auth/*, /api/me*).
 import type http from 'node:http';
+import net from 'node:net';
 import { Limiter, type Accounts, type User } from './accounts.ts';
 import type { Songs } from './songs.ts';
 import type { Sounds } from './sounds.ts';
@@ -40,6 +41,16 @@ export function parseCookies(header: string | undefined): Record<string, string>
     }
   }
   return out;
+}
+
+/** Rate-limit bucket for an address: IPv6 by /64 (one subscriber usually holds a whole /64). */
+export function limitKey(ip: string): string {
+  if (!net.isIPv6(ip)) return ip;
+  const [head, tail = ''] = ip.toLowerCase().split('::');
+  const h = head ? head.split(':') : [];
+  const t = tail ? tail.split(':') : [];
+  const groups = ip.includes('::') ? [...h, ...Array(Math.max(0, 8 - h.length - t.length)).fill('0'), ...t] : h;
+  return `${groups.slice(0, 4).map((g) => (parseInt(g, 16) || 0).toString(16)).join(':')}::/64`;
 }
 
 const hostOf = (req: Pick<http.IncomingMessage, 'headers'>) => String(req.headers.host ?? '').toLowerCase();
@@ -108,6 +119,7 @@ export class Api {
   // guesses spread across many addresses.
   private userIpLimit = new Limiter(10, 15 * 60_000);
   private userLimit = new Limiter(50, 15 * 60_000);
+  private knownPairs = new Set<string>(); // "username|ip" that have signed in successfully (insertion-ordered, capped)
 
   constructor(private deps: ApiDeps) {}
 
@@ -143,7 +155,7 @@ export class Api {
     if (p === '/api/me' && method === 'GET') return send(res, 200, { user: this.user(req) });
 
     if (p === '/api/auth/signup' && method === 'POST') {
-      const ip = this.deps.ip(req);
+      const ip = limitKey(this.deps.ip(req));
       if (this.ipLimit.blocked(ip)) throw new HttpError(429, TOO_MANY);
       const body = (await readJson(req)) as Record<string, unknown>;
       if (!this.deps.signupCode) throw new HttpError(403, 'Sign-up is closed');
@@ -151,18 +163,20 @@ export class Api {
         this.ipLimit.fail(ip);
         throw new HttpError(403, 'Wrong invite code');
       }
-      const r = accounts.signup(str(body.username), str(body.password));
+      const r = await accounts.signup(str(body.username), str(body.password));
       if ('error' in r) throw new HttpError(r.error === 'That username is taken' ? 409 : 400, r.error);
       return send(res, 201, { user: r }, sessionCookie(accounts.createSession(r.id), req));
     }
 
     if (p === '/api/auth/login' && method === 'POST') {
-      const ip = this.deps.ip(req);
+      const ip = limitKey(this.deps.ip(req));
       const body = (await readJson(req)) as Record<string, unknown>;
       const userKey = str(body.username).toLowerCase().slice(0, 64);
       const pairKey = `${userKey}|${ip}`;
-      if (this.ipLimit.blocked(ip) || this.userIpLimit.blocked(pairKey) || this.userLimit.blocked(userKey)) throw new HttpError(429, TOO_MANY);
-      const user = accounts.login(str(body.username), str(body.password));
+      // The per-username cap doesn't apply where this user has signed in before, so strangers can't lock them out.
+      const known = this.knownPairs.has(pairKey);
+      if (this.ipLimit.blocked(ip) || this.userIpLimit.blocked(pairKey) || (!known && this.userLimit.blocked(userKey))) throw new HttpError(429, TOO_MANY);
+      const user = await accounts.login(str(body.username), str(body.password));
       if (!user) {
         this.ipLimit.fail(ip);
         this.userIpLimit.fail(pairKey);
@@ -170,6 +184,9 @@ export class Api {
         throw new HttpError(401, 'Wrong username or password');
       }
       this.userIpLimit.clear(pairKey);
+      this.knownPairs.delete(pairKey);
+      this.knownPairs.add(pairKey);
+      if (this.knownPairs.size > 10_000) this.knownPairs.delete(this.knownPairs.values().next().value!);
       return send(res, 200, { user }, sessionCookie(accounts.createSession(user.id), req));
     }
 

@@ -21,25 +21,28 @@ export function validatePassword(p: unknown): string | null {
   return null;
 }
 
-function hashPassword(password: string, salt: Buffer): Buffer {
-  return crypto.scryptSync(password.normalize('NFKC'), salt, KEYLEN, SCRYPT);
+// Async so hashing runs on the libuv thread pool instead of stalling realtime sessions.
+function hashPassword(password: string, salt: Buffer): Promise<Buffer> {
+  return new Promise((resolve, reject) =>
+    crypto.scrypt(password.normalize('NFKC'), salt, KEYLEN, SCRYPT, (err, key) => (err ? reject(err) : resolve(key))),
+  );
 }
 
 const sha256 = (s: string) => crypto.createHash('sha256').update(s).digest('hex');
 
 // Used when the username doesn't exist, so a miss costs the same scrypt time as a hit.
 const DUMMY_SALT = crypto.randomBytes(16);
-const DUMMY_HASH = hashPassword('not-a-real-password', DUMMY_SALT);
+const DUMMY_HASH = crypto.scryptSync('not-a-real-password', DUMMY_SALT, KEYLEN, SCRYPT);
 
 export class Accounts {
   constructor(private db: Db) {}
 
-  signup(username: string, password: string): User | { error: string } {
+  async signup(username: string, password: string): Promise<User | { error: string }> {
     const bad = validateUsername(username) ?? validatePassword(password);
     if (bad) return { error: bad };
     const name = username.toLowerCase();
     const salt = crypto.randomBytes(16);
-    const hash = hashPassword(password, salt);
+    const hash = await hashPassword(password, salt);
     try {
       const r = this.db.sql
         .prepare('INSERT INTO users (username, pass_salt, pass_hash, created_at) VALUES (?, ?, ?, ?)')
@@ -51,14 +54,14 @@ export class Accounts {
     }
   }
 
-  login(username: string, password: string): User | null {
+  async login(username: string, password: string): Promise<User | null> {
     if (typeof username !== 'string' || typeof password !== 'string' || password.length > 128) return null;
     const row = this.db.sql
       .prepare('SELECT id, username, pass_salt, pass_hash FROM users WHERE username = ?')
       .get(username.toLowerCase()) as { id: number; username: string; pass_salt: string; pass_hash: string } | undefined;
     const salt = row ? Buffer.from(row.pass_salt, 'hex') : DUMMY_SALT;
     const expected = row ? Buffer.from(row.pass_hash, 'hex') : DUMMY_HASH;
-    const ok = crypto.timingSafeEqual(hashPassword(password, salt), expected);
+    const ok = crypto.timingSafeEqual(await hashPassword(password, salt), expected);
     return row && ok ? { id: row.id, username: row.username } : null;
   }
 
@@ -94,14 +97,14 @@ export class Accounts {
   }
 
   /** Sets a new random password, signs the user out everywhere, returns the password. */
-  resetPassword(username: string): string | null {
+  async resetPassword(username: string): Promise<string | null> {
     const row = this.db.sql.prepare('SELECT id FROM users WHERE username = ?').get(username.toLowerCase()) as { id: number } | undefined;
     if (!row) return null;
     const password = crypto.randomBytes(12).toString('base64url');
     const salt = crypto.randomBytes(16);
     this.db.sql
       .prepare('UPDATE users SET pass_salt = ?, pass_hash = ? WHERE id = ?')
-      .run(salt.toString('hex'), hashPassword(password, salt).toString('hex'), row.id);
+      .run(salt.toString('hex'), (await hashPassword(password, salt)).toString('hex'), row.id);
     this.db.sql.prepare('DELETE FROM sessions WHERE user_id = ?').run(row.id);
     return password;
   }

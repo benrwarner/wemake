@@ -1,5 +1,5 @@
 // Plugin registry: built-ins, external ES-module plugins and WAM 2.0 plugins.
-import { catalogName, isCatalogUrl } from './catalog';
+import { catalogName, isAllowedCatalogUrl } from './catalog';
 import { FX } from './fx';
 import { INSTRUMENTS } from './instruments';
 import { type PluginDef, type PluginHost, type PluginInstance, type ParamDef, dbToGain, ramp, resolveParams } from './types';
@@ -28,7 +28,7 @@ export function shortPluginName(type: string) {
 const CATALOG_TRUST_KEY = 'wemake.trustCatalog';
 let catalogOk = (() => { try { return localStorage.getItem(CATALOG_TRUST_KEY) === '1'; } catch { return false; } })();
 export const catalogTrusted = () => catalogOk;
-export const isCatalogPlugin = (type: string) => type.startsWith('wam:') && isCatalogUrl(externalUrl(type));
+export const isCatalogPlugin = (type: string) => type.startsWith('wam:') && isAllowedCatalogUrl(externalUrl(type));
 export function trustCatalog() {
   catalogOk = true;
   try { localStorage.setItem(CATALOG_TRUST_KEY, '1'); } catch { /* storage unavailable */ }

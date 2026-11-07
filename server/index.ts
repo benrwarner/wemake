@@ -18,7 +18,7 @@ import { Accounts } from './accounts.ts';
 import { Api, currentUser, originAllowed } from './api.ts';
 import { Songs } from './songs.ts';
 import { Sounds } from './sounds.ts';
-import { Storage, referencedAudioIds } from './storage.ts';
+import { Storage } from './storage.ts';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DATA = path.resolve(process.env.DATA_DIR ?? path.join(ROOT, 'data'));
@@ -56,6 +56,16 @@ function backupDb() {
 setInterval(() => accounts.sweep(), 3600_000).unref();
 setInterval(backupDb, 24 * 3600_000).unref();
 setTimeout(backupDb, 60_000).unref(); // one shortly after start, so a fresh deploy has a backup
+
+// Hourly: delete takes that songs closed for over a day no longer use.
+function cleanTakes() {
+  try {
+    for (const { room, deleted } of storage.collectIdle(path.join(DATA, 'rooms'), (r) => rooms.has(r))) {
+      console.log(`removed ${deleted.length} unused take(s) from ${room}`);
+    }
+  } catch (err) { console.error('take cleanup failed', err); }
+}
+setInterval(cleanTakes, 3600_000).unref();
 
 function iceServers() {
   if (process.env.ICE_SERVERS) {
@@ -318,13 +328,7 @@ wss.on('connection', (ws, req) => {
     if (joined) broadcast(room, { t: 'peer-leave', id: peer.id });
     clearTimeout(helloTimer);
     if (--room.conns === 0) {
-      if (!room.fresh) {
-        saveRoom(room); // never persist rooms nobody actually joined
-        try {
-          const gone = storage.collect(room.id, referencedAudioIds(room.doc));
-          if (gone.length) console.log(`removed ${gone.length} unused take(s) from ${room.id}`);
-        } catch (err) { console.error('take cleanup failed', err); }
-      }
+      if (!room.fresh) saveRoom(room); // never persist rooms nobody actually joined
       room.doc.destroy();
       rooms.delete(room.id);
     }

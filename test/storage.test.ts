@@ -29,11 +29,11 @@ function sineWav(seconds = 1, rate = 44100): Buffer {
   return Buffer.concat([h, data]);
 }
 
-test('freeBytes reports a positive number', () => {
+test('freeBytes reports a positive number', async () => {
   assert.ok(freeBytes(os.tmpdir()) > 0);
 });
 
-test('resolveTake prefers flac over wav', () => {
+test('resolveTake prefers flac over wav', async () => {
   const dir = tmpAudio();
   const s = new Storage({ audioDir: dir, minFreeBytes: 0 });
   assert.equal(s.resolveTake('room1', 'abcd'), null);
@@ -43,7 +43,7 @@ test('resolveTake prefers flac over wav', () => {
   assert.deepEqual(s.resolveTake('room1', 'abcd'), { file: path.join(dir, 'room1', 'abcd.flac'), type: 'audio/flac' });
 });
 
-test('collect deletes only old unreferenced takes', () => {
+test('collect deletes only old unreferenced takes', async () => {
   const dir = tmpAudio();
   const s = new Storage({ audioDir: dir, minFreeBytes: 0 });
   const f = (n: string) => path.join(dir, 'room1', n);
@@ -56,7 +56,7 @@ test('collect deletes only old unreferenced takes', () => {
   assert.deepEqual(s.collect('no-such-room', new Set()), []);
 });
 
-test('hasRoom compares free space with the limit', () => {
+test('hasRoom compares free space with the limit', async () => {
   const dir = tmpAudio();
   assert.equal(new Storage({ audioDir: dir, minFreeBytes: 0 }).hasRoom(), true);
   assert.equal(new Storage({ audioDir: dir, minFreeBytes: Number.MAX_SAFE_INTEGER }).hasRoom(), false);
@@ -86,7 +86,7 @@ test('enqueueFlac replaces wav with flac', { skip: !hasFlac && 'flac not install
   assert.equal(s.resolveTake('room1', 'take2')?.type, 'audio/flac');
 });
 
-test('referencedAudioIds lists clip audio ids', () => {
+test('referencedAudioIds lists clip audio ids', async () => {
   const doc = new Y.Doc();
   M.seedProject(doc);
   const track = M.snapshot(doc).order[0];
@@ -123,7 +123,7 @@ test('admin CLI lists users, resets passwords and deletes users', async () => {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wemake-admin-'));
   const db = new Db(path.join(dataDir, 'wemake.db'));
   const acc = new Accounts(db);
-  acc.signup('alice', 'password1');
+  await acc.signup('alice', 'password1');
   const admin = (...args: string[]) => spawnSync('npx', ['tsx', 'server/admin.ts', ...args], { env: { ...process.env, DATA_DIR: dataDir }, encoding: 'utf8' });
   const list = admin('list-users');
   assert.equal(list.status, 0, list.stderr);
@@ -132,7 +132,7 @@ test('admin CLI lists users, resets passwords and deletes users', async () => {
   assert.equal(reset.status, 0, reset.stderr);
   const pw = /New password for alice: (\S+)/.exec(reset.stdout)?.[1];
   assert.ok(pw);
-  assert.ok(acc.login('alice', pw!));
+  assert.ok(await acc.login('alice', pw!));
   assert.notEqual(admin('reset-password', 'ghost').status, 0);
   assert.equal(admin('delete-user', 'alice').status, 0);
   assert.equal(acc.listUsers().length, 0);
@@ -141,4 +141,53 @@ test('admin CLI lists users, resets passwords and deletes users', async () => {
   assert.equal(ct.status, 0, ct.stderr);
   assert.notEqual(admin('bogus').status, 0);
   db.close();
+});
+
+test('collectIdle only cleans songs that have been closed for a day', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wemake-idle-'));
+  const audio = path.join(root, 'audio');
+  const roomsDir = path.join(root, 'rooms');
+  fs.mkdirSync(roomsDir, { recursive: true });
+  const old = (Date.now() - 2 * 24 * 3600_000) / 1000;
+  const mkRoom = (room: string, ybinAgeOld: boolean) => {
+    const doc = new Y.Doc();
+    M.seedProject(doc);
+    M.addClip(doc, { trackId: M.snapshot(doc).order[0], start: 0, length: 4, audioId: 'keep1' } as any);
+    const ybin = path.join(roomsDir, `${room}.ybin`);
+    fs.writeFileSync(ybin, Y.encodeStateAsUpdate(doc));
+    if (ybinAgeOld) fs.utimesSync(ybin, old, old);
+    fs.mkdirSync(path.join(audio, room), { recursive: true });
+    for (const n of ['keep1.flac', 'gone1.wav']) {
+      fs.writeFileSync(path.join(audio, room, n), 'x');
+      fs.utimesSync(path.join(audio, room, n), old, old);
+    }
+  };
+  mkRoom('idle', true);
+  mkRoom('recent', false); // closed less than a day ago: undo after a reconnect must still work
+  mkRoom('open', true);
+  fs.mkdirSync(path.join(audio, 'orphan'), { recursive: true }); // takes but no song file: leave alone
+  fs.writeFileSync(path.join(audio, 'orphan', 'x1.wav'), 'x');
+  fs.utimesSync(path.join(audio, 'orphan', 'x1.wav'), old, old);
+  const s = new Storage({ audioDir: audio, minFreeBytes: 0 });
+  const out = s.collectIdle(roomsDir, (r) => r === 'open');
+  assert.deepEqual(out, [{ room: 'idle', deleted: ['gone1'] }]);
+  assert.deepEqual(fs.readdirSync(path.join(audio, 'idle')), ['keep1.flac']);
+  assert.equal(fs.readdirSync(path.join(audio, 'recent')).length, 2);
+  assert.equal(fs.readdirSync(path.join(audio, 'open')).length, 2);
+  assert.equal(fs.readdirSync(path.join(audio, 'orphan')).length, 1);
+});
+
+test('two encoders racing on one wav leave a valid flac', { skip: !hasFlac && 'flac not installed' }, async () => {
+  for (let round = 0; round < 3; round++) {
+    const dir = tmpAudio();
+    const wav = path.join(dir, 'room1', 'race1.wav');
+    fs.writeFileSync(wav, sineWav(3));
+    const a = new Storage({ audioDir: dir, minFreeBytes: 0 });
+    const b = new Storage({ audioDir: dir, minFreeBytes: 0 }); // e.g. the server and `admin.ts compress-takes`
+    await Promise.all([a.enqueueFlac(wav), b.enqueueFlac(wav)]);
+    const flac = path.join(dir, 'room1', 'race1.flac');
+    assert.ok(fs.existsSync(flac));
+    assert.equal(spawnSync('flac', ['-t', '--silent', flac]).status, 0, 'flac verifies');
+    assert.deepEqual(fs.readdirSync(path.join(dir, 'room1')), ['race1.flac']);
+  }
 });

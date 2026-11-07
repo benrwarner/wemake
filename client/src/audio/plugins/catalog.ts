@@ -47,7 +47,19 @@ export function isCatalogUrl(url: string): boolean {
 
 const str = (v: unknown) => (typeof v === 'string' ? v : '');
 
-export function parseCatalog(json: unknown, allow: Set<string>): CatalogItem[] {
+/**
+ * A catalog URL that is one of the vetted plugin files. One-click catalog trust covers only these,
+ * not anything else that may appear under the community folder later.
+ */
+export function isAllowedCatalogUrl(url: string): boolean {
+  if (!isCatalogUrl(url)) return false;
+  const rel = url.slice(CATALOG_BASE.length);
+  for (const p of CATALOG_ALLOW.values()) if (p === rel) return true;
+  return false;
+}
+
+/** allow: identifier → expected path (paths are checked when given, so a changed entry isn't trusted). */
+export function parseCatalog(json: unknown, allow: Set<string> | Map<string, string>): CatalogItem[] {
   if (!Array.isArray(json)) return [];
   const out: CatalogItem[] = [];
   for (const raw of json) {
@@ -64,6 +76,7 @@ export function parseCatalog(json: unknown, allow: Set<string>): CatalogItem[] {
       continue;
     }
     if (!isCatalogUrl(url)) continue;
+    if (allow instanceof Map && allow.get(id) !== url.slice(CATALOG_BASE.length)) continue;
     let thumbnail: string | undefined;
     try {
       const t = p.thumbnail ? new URL(str(p.thumbnail), CATALOG_BASE).href : '';

@@ -12,25 +12,25 @@ function setup() {
   return { dir, db, acc: new Accounts(db) };
 }
 
-test('signup then login works; wrong password and unknown user both return null', () => {
+test('signup then login works; wrong password and unknown user both return null', async () => {
   const { acc, db } = setup();
-  const u = acc.signup('ana', 'correct horse');
+  const u = await acc.signup('ana', 'correct horse');
   assert.ok('id' in u);
   assert.equal(u.username, 'ana');
-  assert.deepEqual(acc.login('ANA', 'correct horse'), { id: u.id, username: 'ana' });
-  assert.equal(acc.login('ana', 'wrong password'), null);
-  assert.equal(acc.login('nobody', 'correct horse'), null);
+  assert.deepEqual(await acc.login('ANA', 'correct horse'), { id: u.id, username: 'ana' });
+  assert.equal(await acc.login('ana', 'wrong password'), null);
+  assert.equal(await acc.login('nobody', 'correct horse'), null);
   db.close();
 });
 
-test('usernames are case-insensitive unique', () => {
+test('usernames are case-insensitive unique', async () => {
   const { acc, db } = setup();
-  acc.signup('Ana', 'password1');
-  assert.deepEqual(acc.signup('ana', 'password2'), { error: 'That username is taken' });
+  await acc.signup('Ana', 'password1');
+  assert.deepEqual(await acc.signup('ana', 'password2'), { error: 'That username is taken' });
   db.close();
 });
 
-test("validateUsername rejects 'ab', 'a b', 'x'.repeat(33); validatePassword rejects 'short'", () => {
+test("validateUsername rejects 'ab', 'a b', 'x'.repeat(33); validatePassword rejects 'short'", async () => {
   for (const bad of ['ab', 'a b', 'x'.repeat(33), 42, undefined]) assert.equal(typeof validateUsername(bad), 'string');
   assert.equal(validateUsername('ok_name-1'), null);
   assert.equal(typeof validatePassword('short'), 'string');
@@ -38,9 +38,9 @@ test("validateUsername rejects 'ab', 'a b', 'x'.repeat(33); validatePassword rej
   assert.equal(validatePassword('longenough'), null);
 });
 
-test('session token is not stored raw', () => {
+test('session token is not stored raw', async () => {
   const { acc, db } = setup();
-  const u = acc.signup('ben', 'password1') as { id: number; username: string };
+  const u = await acc.signup('ben', 'password1') as { id: number; username: string };
   const token = acc.createSession(u.id);
   const rows = db.sql.prepare('SELECT token_hash FROM sessions').all() as { token_hash: string }[];
   assert.equal(rows.length, 1);
@@ -54,9 +54,9 @@ test('session token is not stored raw', () => {
   db.close();
 });
 
-test('expired session returns null', () => {
+test('expired session returns null', async () => {
   const { acc, db } = setup();
-  const u = acc.signup('ben', 'password1') as { id: number };
+  const u = await acc.signup('ben', 'password1') as { id: number };
   const token = acc.createSession(u.id);
   db.sql.prepare('UPDATE sessions SET expires_at = ?').run(Date.now() - 1000);
   assert.equal(acc.userForToken(token), null);
@@ -65,9 +65,9 @@ test('expired session returns null', () => {
   db.close();
 });
 
-test('deleteUser cascades sessions, user_rooms and sounds', () => {
+test('deleteUser cascades sessions, user_rooms and sounds', async () => {
   const { acc, db } = setup();
-  const u = acc.signup('ben', 'password1') as { id: number };
+  const u = await acc.signup('ben', 'password1') as { id: number };
   acc.createSession(u.id);
   db.sql.prepare("INSERT INTO user_rooms (user_id, room, role, last_opened_at) VALUES (?, 'r1', 'owner', 0)").run(u.id);
   db.sql
@@ -81,24 +81,24 @@ test('deleteUser cascades sessions, user_rooms and sounds', () => {
   db.close();
 });
 
-test('resetPassword returns a new password that logs in; old one fails', () => {
+test('resetPassword returns a new password that logs in; old one fails', async () => {
   const { acc, db } = setup();
-  const u = acc.signup('ben', 'password1') as { id: number };
+  const u = await acc.signup('ben', 'password1') as { id: number };
   const token = acc.createSession(u.id);
-  const pw = acc.resetPassword('ben');
+  const pw = await acc.resetPassword('ben');
   assert.ok(pw && pw.length >= 12);
-  assert.equal(acc.login('ben', 'password1'), null);
-  assert.ok(acc.login('ben', pw!));
+  assert.equal(await acc.login('ben', 'password1'), null);
+  assert.ok(await acc.login('ben', pw!));
   assert.equal(acc.userForToken(token), null, 'reset signs out existing sessions');
-  assert.equal(acc.resetPassword('ghost'), null);
+  assert.equal(await acc.resetPassword('ghost'), null);
   db.close();
 });
 
-test('listUsers lists usernames', () => {
+test('listUsers lists usernames', async () => {
   const { acc, db } = setup();
-  acc.signup('b', 'x');
-  acc.signup('bob', 'password1');
-  acc.signup('amy', 'password1');
+  await acc.signup('b', 'x');
+  await acc.signup('bob', 'password1');
+  await acc.signup('amy', 'password1');
   assert.deepEqual(
     acc.listUsers().map((u) => u.username),
     ['amy', 'bob'],
@@ -106,20 +106,20 @@ test('listUsers lists usernames', () => {
   db.close();
 });
 
-test('two Db handles on one file can both write', () => {
+test('two Db handles on one file can both write', async () => {
   const { dir, db, acc } = setup();
   const db2 = new Db(path.join(dir, 'wemake.db'));
   const acc2 = new Accounts(db2);
-  assert.ok('id' in acc.signup('one', 'password1'));
-  assert.ok('id' in acc2.signup('two', 'password1'));
+  assert.ok('id' in await acc.signup('one', 'password1'));
+  assert.ok('id' in await acc2.signup('two', 'password1'));
   assert.equal(acc.listUsers().length, 2);
   db.close();
   db2.close();
 });
 
-test('backup writes wemake-YYYYMMDD.db and keeps only 7', () => {
+test('backup writes wemake-YYYYMMDD.db and keeps only 7', async () => {
   const { dir, db, acc } = setup();
-  acc.signup('ben', 'password1');
+  await acc.signup('ben', 'password1');
   const bdir = path.join(dir, 'backups');
   fs.mkdirSync(bdir);
   for (let i = 1; i <= 9; i++) fs.writeFileSync(path.join(bdir, `wemake-2020010${i}.db`), 'old');
@@ -138,7 +138,7 @@ test('backup writes wemake-YYYYMMDD.db and keeps only 7', () => {
   db.close();
 });
 
-test('Limiter blocks after max fails and clears', () => {
+test('Limiter blocks after max fails and clears', async () => {
   const l = new Limiter(3, 60_000);
   assert.equal(l.blocked('k'), false);
   l.fail('k');
@@ -153,13 +153,13 @@ test('Limiter blocks after max fails and clears', () => {
 
 import { parseCookies, sessionCookie } from '../server/api.ts';
 
-test('parseCookies decodes values', () => {
+test('parseCookies decodes values', async () => {
   assert.deepEqual(parseCookies('a=1; wm_session=x%3D'), { a: '1', wm_session: 'x=' });
   assert.deepEqual(parseCookies(undefined), {});
   assert.deepEqual(parseCookies('bad; =x; y=%E0%A4%A'), { y: '%E0%A4%A' });
 });
 
-test('sessionCookie is Secure except on localhost', () => {
+test('sessionCookie is Secure except on localhost', async () => {
   const req = (host: string) => ({ headers: { host } }) as any;
   const pub = sessionCookie('tok', req('wemake.ben-warner.dev'));
   assert.match(pub, /^wm_session=tok;/);
@@ -173,11 +173,11 @@ test('sessionCookie is Secure except on localhost', () => {
 
 import { Songs } from '../server/songs.ts';
 
-test('dropAbsentMembers with nobody signed in present drops every member but keeps owners', () => {
+test('dropAbsentMembers with nobody signed in present drops every member but keeps owners', async () => {
   const { acc, db } = setup();
   const songs = new Songs(db);
-  const o = acc.signup('owner', 'password1') as { id: number };
-  const m = acc.signup('member', 'password1') as { id: number };
+  const o = await acc.signup('owner', 'password1') as { id: number };
+  const m = await acc.signup('member', 'password1') as { id: number };
   songs.touch(o.id, 'r', 'owner');
   songs.touch(m.id, 'r', 'member');
   songs.touch(m.id, 'other', 'member');
@@ -185,4 +185,25 @@ test('dropAbsentMembers with nobody signed in present drops every member but kee
   assert.equal(songs.list(o.id).length, 1);
   assert.deepEqual(songs.list(m.id).map((s) => s.room), ['other']);
   db.close();
+});
+
+import { limitKey } from '../server/api.ts';
+
+test('password hashing does not block the event loop', async () => {
+  const { acc, db } = setup();
+  await acc.signup('busy', 'password1');
+  let ticks = 0;
+  const timer = setInterval(() => ticks++, 1);
+  await Promise.all(Array.from({ length: 6 }, () => acc.login('busy', 'wrongwrong')));
+  clearInterval(timer);
+  assert.ok(ticks > 3, `event loop ticked ${ticks} times during hashing`);
+  db.close();
+});
+
+test('limitKey groups IPv6 addresses by /64 and keeps IPv4 as is', async () => {
+  assert.equal(limitKey('2001:db8:1:2:aaaa::1'), limitKey('2001:db8:1:2:bbbb:cccc:dddd:9'));
+  assert.notEqual(limitKey('2001:db8:1:2::1'), limitKey('2001:db8:1:3::1'));
+  assert.equal(limitKey('2001:db8::1'), limitKey('2001:0db8:0:0:ffff::2'));
+  assert.equal(limitKey('203.0.113.7'), '203.0.113.7');
+  assert.equal(limitKey('::1'), limitKey('::1'));
 });

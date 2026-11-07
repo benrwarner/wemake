@@ -471,3 +471,12 @@ test('a guest locking a song does not drop members from their lists', async () =
   assert.equal((await api('/api/me/songs', { cookie: mem.cookie })).body.songs.length, 1);
   a.ws.close(); g.ws.close();
 });
+
+test("strangers can't lock a friend out from a device they've used before", async () => {
+  await newUser('lockout');
+  const home = '203.0.113.77';
+  assert.equal((await api('/api/auth/login', { body: { username: 'lockout', password: 'password123' }, ip: home })).status, 200);
+  for (let i = 0; i < 50; i++) await api('/api/auth/login', { body: { username: 'lockout', password: 'wrongwrong' } });
+  assert.equal((await api('/api/auth/login', { body: { username: 'lockout', password: 'password123' } })).status, 429, 'new address is capped');
+  assert.equal((await api('/api/auth/login', { body: { username: 'lockout', password: 'password123' }, ip: home })).status, 200, 'known address still works');
+});
