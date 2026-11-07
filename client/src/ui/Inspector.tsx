@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import * as M from '../../../shared/model';
 import type { FxSlot, Track } from '../../../shared/model';
 import type { Studio } from '../state/studio';
-import { builtinFx, builtinInstruments, externalUrl, getDef, safeHost, shortPluginName, isExternal, isTrusted, trustPlugin, validatePluginUrl } from '../audio/plugins/registry';
+import { builtinFx, builtinInstruments, externalUrl, getDef, isCatalogPlugin, safeHost, shortPluginName, isExternal, isTrusted, trustCatalog, trustPlugin, validatePluginUrl } from '../audio/plugins/registry';
+import { BrowseSounds, SaveSound } from './BrowseSounds';
 import { type ParamDef, resolveParams } from '../audio/plugins/types';
 import { ParamControl } from './controls';
 import { useStudio } from './hooks';
@@ -10,12 +11,14 @@ import { useStudio } from './hooks';
 export function Inspector() {
   const s = useStudio();
   const t = s.selectedTrack ? s.snap.tracks[s.selectedTrack] : undefined;
+  const [browse, setBrowse] = useState<null | 'fx' | 'instrument'>(null);
   if (!t) return <div className="empty">Select a track to see its instrument and effects.</div>;
   return (
     <div className="inspector">
-      {t.kind === 'instrument' && <InstrumentPanel s={s} t={t} />}
+      {t.kind === 'instrument' && <InstrumentPanel s={s} t={t} onBrowse={() => setBrowse('instrument')} />}
       {t.kind === 'audio' && <InputPanel s={s} t={t} />}
-      <FxRack s={s} t={t} />
+      <FxRack s={s} t={t} onBrowse={() => setBrowse('fx')} />
+      {browse && <BrowseSounds s={s} t={t} initialKind={browse} onClose={() => setBrowse(null)} />}
     </div>
   );
 }
@@ -51,7 +54,7 @@ function MeterInline({ s }: { s: Studio }) {
   return <div className="meter h grow"><div ref={ref} className="meter-fill" /></div>;
 }
 
-function InstrumentPanel({ s, t }: { s: Studio; t: Track }) {
+function InstrumentPanel({ s, t, onBrowse }: { s: Studio; t: Track; onBrowse: () => void }) {
   const spec = t.instrument!;
   const def = getDef(spec.type);
   const strip = s.engine.strip(t.id);
@@ -73,6 +76,11 @@ function InstrumentPanel({ s, t }: { s: Studio; t: Track }) {
         </select>
         <button className={`arm-small ${armed ? 'on' : ''}`} onClick={() => s.arm(t.id)} title="Your keyboard / MIDI controller plays this track">{armed ? '● Playing' : 'Play this'}</button>
       </h3>
+      <div className="row sound-actions">
+        <button className="ghost small" onClick={onBrowse}>🔍 Browse sounds</button>
+        <SaveSound kind="instrument" type={spec.type} defaultName={def?.name ?? 'My sound'}
+          values={async () => ({ ...spec.params, ...values, ...((await inst?.getParamValues?.().catch(() => ({}))) ?? {}) })} />
+      </div>
       {wamUrl && (
         <UrlField placeholder="https://…/index.js (WAM 2.0 instrument)" onCancel={() => setWamUrl(false)} onSubmit={(url) => {
           try {
@@ -109,7 +117,10 @@ function TrustBanner({ type }: { type: string }) {
     <div className="trust">
       <p>This session uses an external plugin from <b>{safeHost(type)}</b>. It runs code in your browser.</p>
       <code>{url}</code>
-      <button onClick={() => trustPlugin(type)}>Trust &amp; load</button>
+      <div className="row">
+        <button onClick={() => trustPlugin(type)}>Trust &amp; load</button>
+        {isCatalogPlugin(type) && <button className="ghost" onClick={() => trustCatalog()}>Trust all community plugins</button>}
+      </div>
     </div>
   );
 }
@@ -135,7 +146,7 @@ function PluginGuiButton({ create }: { create: () => Promise<HTMLElement> }) {
   );
 }
 
-function FxRack({ s, t }: { s: Studio; t: Track }) {
+function FxRack({ s, t, onBrowse }: { s: Studio; t: Track; onBrowse: () => void }) {
   const [adding, setAdding] = useState(false);
   const [urlKind, setUrlKind] = useState<'ext' | 'wam' | null>(null);
   const add = (type: string) => { s.edit((d) => M.addFx(d, t.id, type)); setAdding(false); setUrlKind(null); };
@@ -155,7 +166,10 @@ function FxRack({ s, t }: { s: Studio; t: Track }) {
         {t.fx.length === 0 && <div className="muted small">No effects yet.</div>}
         {t.fx.map((f, i) => <FxCard key={f.id} s={s} t={t} f={f} first={i === 0} last={i === t.fx.length - 1} />)}
         <div className="fx-add">
-          <button onClick={() => setAdding(!adding)} aria-expanded={adding}>＋ Add effect</button>
+          <div className="row">
+            <button onClick={() => setAdding(!adding)} aria-expanded={adding}>＋ Add effect</button>
+            <button className="ghost" onClick={onBrowse}>🔍 Browse sounds</button>
+          </div>
           {adding && (
             <div className="fx-menu">
               {[...cats].map(([cat, defs]) => (
@@ -219,6 +233,8 @@ function FxCard({ s, t, f, first, last }: { s: Studio; t: Track; f: FxSlot; firs
               onChange={(v) => s.edit((d) => M.setFx(d, t.id, f.id, { param: [p.id, v] }))} />
           ))}
           {inst?.createGui && <PluginGuiButton create={() => inst.createGui!()} />}
+          <SaveSound kind="fx" type={f.type} defaultName={def?.name ?? 'My effect'}
+            values={async () => ({ ...f.params, ...values, ...((await inst?.getParamValues?.().catch(() => ({}))) ?? {}) })} />
         </div>
       )}
     </div>

@@ -43,6 +43,8 @@ export interface PluginInstance {
   allNotesOff?(time?: number): void;
   /** Optional custom editor (WAM plugins ship their own GUI). */
   createGui?(): Promise<HTMLElement>;
+  /** Current parameter values as the plugin sees them (WAM GUIs can change them directly). */
+  getParamValues?(): Promise<Record<string, number>>;
   dispose(): void;
 }
 

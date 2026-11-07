@@ -1,4 +1,5 @@
 // Plugin registry: built-ins, external ES-module plugins and WAM 2.0 plugins.
+import { catalogName, isCatalogUrl } from './catalog';
 import { FX } from './fx';
 import { INSTRUMENTS } from './instruments';
 import { type PluginDef, type PluginHost, type PluginInstance, type ParamDef, dbToGain, ramp, resolveParams } from './types';
@@ -23,7 +24,17 @@ export function safeHost(type: string) { try { return new URL(externalUrl(type))
 export function shortPluginName(type: string) {
   try { return new URL(externalUrl(type)).pathname.split('/').filter(Boolean).slice(-2).join('/') || safeHost(type); } catch { return 'invalid plugin'; }
 }
-export const isTrusted = (type: string) => !isExternal(type) || trusted.has(externalUrl(type));
+// One "allow" covers every WAM plugin from the community catalog (checked on the normalized URL).
+const CATALOG_TRUST_KEY = 'wemake.trustCatalog';
+let catalogOk = (() => { try { return localStorage.getItem(CATALOG_TRUST_KEY) === '1'; } catch { return false; } })();
+export const catalogTrusted = () => catalogOk;
+export const isCatalogPlugin = (type: string) => type.startsWith('wam:') && isCatalogUrl(externalUrl(type));
+export function trustCatalog() {
+  catalogOk = true;
+  try { localStorage.setItem(CATALOG_TRUST_KEY, '1'); } catch { /* storage unavailable */ }
+  trustListeners.forEach((f) => f());
+}
+export const isTrusted = (type: string) => !isExternal(type) || trusted.has(externalUrl(type)) || (catalogOk && isCatalogPlugin(type));
 export function trustPlugin(type: string) {
   trusted.add(externalUrl(type));
   try { localStorage.setItem(TRUST_KEY, JSON.stringify([...trusted])); } catch { /* storage unavailable */ }
@@ -54,7 +65,7 @@ async function loadExternal(type: string): Promise<PluginDef> {
 function wamDef(type: string): PluginDef {
   const url = externalUrl(type);
   let name = 'WAM';
-  try { name = decodeURIComponent(new URL(url).pathname.split('/').filter((s) => s && !/\.js$/.test(s)).pop() ?? 'WAM'); } catch { /* keep default */ }
+  try { name = catalogName(url) ?? decodeURIComponent(new URL(url).pathname.split('/').filter((s) => s && !/\.js$/.test(s) && s !== 'dist' && s !== 'src').pop() ?? 'WAM'); } catch { /* keep default */ }
   return {
     type, name, kind: 'fx', category: 'WAM 2.0', params: [],
     async create(host: PluginHost): Promise<PluginInstance> {
@@ -80,6 +91,12 @@ function wamDef(type: string): PluginDef {
         playNote(n, v, t, d) { midi([0x90, n, Math.max(1, Math.round(v * 127))], t); midi([0x80, n, 0], t + d); },
         allNotesOff: (t = host.ctx.currentTime) => midi([0xb0, 123, 0], t),
         createGui: () => inst.createGui(),
+        async getParamValues() {
+          const v: Record<string, { value: number }> = await node.getParameterValues(false);
+          const out: Record<string, number> = {};
+          for (const [k, p] of Object.entries(v ?? {})) if (Number.isFinite(p?.value)) out[k] = p.value;
+          return out;
+        },
         dispose() { try { node.disconnect(); node.destroy?.(); } catch { /* already gone */ } },
       };
     },
