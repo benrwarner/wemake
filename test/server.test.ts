@@ -94,6 +94,7 @@ test('audio takes need a session token, upload once and are served immutably; ba
   assert.equal(get.status, 200);
   assert.deepEqual(new Uint8Array(await get.arrayBuffer()), body);
   assert.match(get.headers.get('cache-control') ?? '', /immutable/);
+  assert.match(get.headers.get('cache-control') ?? '', /^private\b/, 'token-gated takes must not be stored by shared caches');
   assert.equal((await fetch(`${BASE}/api/audio/itest-three/..%2F..%2Fetc`)).status, 400);
 });
 
@@ -182,5 +183,23 @@ test('repeated wrong passwords are throttled', async () => {
   }
   const right = client('itest-brute', 'Eve', 'correct-horse');
   assert.match((await right.waitFor((m) => m.t === 'auth')).error, /Too many/);
+  owner.ws.close();
+});
+
+test('wrong-password throttling is per client IP behind a proxy', async () => {
+  const owner = client('itest-brute-ip', 'Ana', 'correct-horse');
+  await owner.ready;
+  // the test connects from loopback, which is a trusted proxy, so CF-Connecting-IP identifies the user
+  const as = (ip: string, password: string) => {
+    const ws = new WebSocket(`ws://localhost:${PORT}/ws?room=itest-brute-ip`, { headers: { 'cf-connecting-ip': ip } });
+    return new Promise<any>((resolve, reject) => {
+      ws.on('open', () => ws.send(JSON.stringify({ t: 'hello', name: 'X', color: '#ff6b4a', password })));
+      ws.on('message', (d, bin) => { if (bin) return; const m = JSON.parse(d.toString()); if (m.t === 'auth' || m.t === 'welcome') { resolve(m); ws.close(); } });
+      ws.on('error', reject);
+    });
+  };
+  for (let i = 0; i < 8; i++) await as('198.51.100.1', `guess${i}`);
+  assert.match((await as('198.51.100.1', 'correct-horse')).error, /Too many/);
+  assert.equal((await as('198.51.100.2', 'correct-horse')).t, 'welcome', 'another user must not be locked out');
   owner.ws.close();
 });

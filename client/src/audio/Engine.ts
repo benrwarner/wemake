@@ -271,8 +271,13 @@ export class Engine {
 
   constructor(readonly room: string, private clock: { serverNow(): number; toLocal(ms: number): number }, settings: Partial<EngineSettings> = {}) {
     this.settings = { latencyHint: 'interactive', roundTripMs: null, metronome: false, countIn: true, monitor: true, ...settings };
+    if (typeof AudioContext === 'undefined') throw new Error('This browser does not support Web Audio.');
     this.ctx = new AudioContext({ latencyHint: this.settings.latencyHint });
     const ctx = this.ctx;
+    if (!('audioWorklet' in ctx) || !ctx.audioWorklet) {
+      void ctx.close();
+      throw new Error('This page must be served over HTTPS to use audio.');
+    }
     this.host = { ctx, bpm: () => this.snap?.project.bpm ?? 120, wamGroupId: () => this.wamHost() };
     this.masterIn = ctx.createGain();
     this.masterFader = ctx.createGain();

@@ -31,6 +31,12 @@ Sessions can be **password protected**: set one in the lobby when creating a ses
 ### Deploying for friends on other networks
 The server is one Node process (`npm start`). Put it behind HTTPS (required for microphone access). Peer-to-peer audio uses public STUN by default. For friends behind strict NATs, add a TURN server with `TURN_URL`, `TURN_USER` and `TURN_PASS` (or `ICE_SERVERS` as JSON). `DATA_DIR` sets where sessions and takes are stored.
 
+Other settings:
+
+- `MAX_UPLOAD_MB` (default `300`): largest take upload. Behind Cloudflare's Free plan, keep it under 100 (e.g. `95`).
+- `TRUSTED_PROXIES` (default `loopback,private`): which socket peers may supply `CF-Connecting-IP` / `X-Forwarded-For`. `private` covers Docker bridge networks; use `loopback` when the app is not in a container.
+- `ALLOWED_ORIGINS` (unset by default): comma-separated origins allowed to open the WebSocket, e.g. `https://wemake.example.com`. Others are closed with code 4403.
+
 ### Limits worth knowing
 - The mesh is peer-to-peer, so it's great for about 2–6 players. Bigger rooms would need an SFU.
 - Network latency between distant players is physics. Same-city is typically 15–40 ms, which is jammable. Cross-continent isn't, which is why the shared timeline (everyone records against the same click) matters more than live jamming.

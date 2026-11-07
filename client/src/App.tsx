@@ -17,7 +17,14 @@ export function App() {
     return <Lobby error={authError} onJoin={(room, name, color, password) => {
       setAuthError('');
       history.replaceState(null, '', `?room=${encodeURIComponent(room)}`);
-      const st = new Studio(room, name, color, password);
+      let st: Studio;
+      try {
+        st = new Studio(room, name, color, password);
+      } catch (err) {
+        console.error('Could not start the studio', err);
+        setAuthError(err instanceof Error ? err.message : String(err));
+        return;
+      }
       if (import.meta.env.DEV) (window as unknown as { wemake: Studio }).wemake = st; // debugging handle
       setStudio(st);
     }} />;

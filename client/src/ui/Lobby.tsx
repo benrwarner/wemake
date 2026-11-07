@@ -20,7 +20,9 @@ export function Lobby({ onJoin, error }: { onJoin: (room: string, name: string, 
   const [password, setPassword] = useState('');
   const [color, setColor] = useState(load('wemake.color', TRACK_COLORS[Math.floor(Math.random() * TRACK_COLORS.length)]));
   const clean = room.trim().toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64);
-  const ok = clean.length > 0 && name.trim().length > 0;
+  // audioWorklet and getUserMedia only exist on secure origins (https:// or localhost)
+  const insecure = !window.isSecureContext;
+  const ok = !insecure && clean.length > 0 && name.trim().length > 0;
   const join = (e: React.FormEvent) => {
     e.preventDefault();
     if (!ok) return;
@@ -32,6 +34,11 @@ export function Lobby({ onJoin, error }: { onJoin: (room: string, name: string, 
       <div className="lobby-glow" />
       <form className="lobby-card" onSubmit={join}>
         <div className="brand big"><span className="brand-mark" />WeMake</div>
+        {insecure && (
+          <div className="lobby-error lobby-insecure" role="alert">
+            <b>WeMake needs HTTPS for audio and recording.</b> Open this page over https:// (or via localhost).
+          </div>
+        )}
         <p className="lobby-tag">Make music with your friends in real time. Everyone hears the same song, plays live and records takes into one shared session.</p>
         <label>Your name
           <input autoFocus value={name} maxLength={32} onChange={(e) => setName(e.target.value)} placeholder="e.g. Sam" />

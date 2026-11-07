@@ -47,12 +47,17 @@ export class Studio {
   constructor(readonly room: string, readonly name: string, readonly color: string, password = '') {
     const saved = loadSettings();
     this.session = new Session(room, name, color, password);
-    this.engine = new Engine(room, this.session, {
-      latencyHint: saved.latencyHint ?? 'interactive',
-      roundTripMs: saved.roundTripMs ?? null,
-      countIn: saved.countIn ?? true,
-      monitor: saved.monitor ?? true,
-    });
+    try {
+      this.engine = new Engine(room, this.session, {
+        latencyHint: saved.latencyHint ?? 'interactive',
+        roundTripMs: saved.roundTripMs ?? null,
+        countIn: saved.countIn ?? true,
+        monitor: saved.monitor ?? true,
+      });
+    } catch (err) {
+      this.session.close(); // don't leave a joined socket behind when audio can't start
+      throw err;
+    }
     this.inputDevice = saved.inputDevice ?? '';
     this.jitterTarget = saved.jitterTarget ?? 0;
     this.engine.authHeaders = () => ({ 'x-wemake-token': this.session.token });
@@ -334,10 +339,11 @@ export class Studio {
       for (let attempt = 0; ; attempt++) {
         try {
           const res = await fetch(`/api/audio/${this.room}/${id}`, { method: 'PUT', body: data, headers: { 'content-type': 'audio/wav', 'x-wemake-token': this.session.token } });
-          if (!res.ok) throw new Error(`upload failed (${res.status})`);
+          if (res.status === 413) throw Object.assign(new Error('Take too large to upload through this server. Try a shorter take.'), { final: true });
+          if (!res.ok) throw Object.assign(new Error(`upload failed (${res.status})`), { final: res.status >= 400 && res.status < 500 });
           return true;
         } catch (err) {
-          if (attempt >= 3) throw err;
+          if (attempt >= 3 || (err as { final?: boolean }).final) throw err;
           await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
         }
       }

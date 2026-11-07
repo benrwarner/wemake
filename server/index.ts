@@ -12,12 +12,16 @@ import { WebSocketServer, WebSocket } from 'ws';
 import * as Y from 'yjs';
 import { seedProject } from '../shared/model.ts';
 import { Auth } from './auth.ts';
+import { clientIp as resolveClientIp, parseTrust } from './clientIp.ts';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DATA = path.resolve(process.env.DATA_DIR ?? path.join(ROOT, 'data'));
 const DIST = path.join(ROOT, 'dist');
 const PORT = Number(process.env.PORT ?? 8787);
-const MAX_UPLOAD = 300 * 1024 * 1024;
+const MAX_UPLOAD = (Number(process.env.MAX_UPLOAD_MB) > 0 ? Number(process.env.MAX_UPLOAD_MB) : 300) * 1024 * 1024;
+const TRUSTED_PROXIES = parseTrust(process.env.TRUSTED_PROXIES);
+// Optional WebSocket Origin allowlist, e.g. "https://wemake.example.com,https://pi.tailnet.ts.net"
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS ?? '').split(',').map((s) => s.trim().replace(/\/+$/, '').toLowerCase()).filter(Boolean);
 const ROOM_RE = /^[a-z0-9][a-z0-9-]{0,63}$/i;
 const ID_RE = /^[a-z0-9]{4,40}$/i;
 
@@ -27,15 +31,8 @@ fs.mkdirSync(path.join(DATA, 'audio'), { recursive: true });
 const now = () => performance.timeOrigin + performance.now();
 const auth = new Auth(path.join(DATA, 'rooms'));
 
-/** Client address; proxy headers are only trusted from a local reverse proxy (nginx/cloudflared). */
-function clientIp(req: http.IncomingMessage) {
-  const remote = req.socket.remoteAddress ?? '';
-  if (/^(::1|127\.|::ffff:127\.)/.test(remote)) {
-    const fwd = (req.headers['cf-connecting-ip'] as string) ?? (req.headers['x-forwarded-for'] as string)?.split(',')[0];
-    if (fwd) return fwd.trim();
-  }
-  return remote;
-}
+/** Client address; forwarded headers are only honoured from trusted proxies (see server/clientIp.ts). */
+const clientIp = (req: http.IncomingMessage) => resolveClientIp(req, TRUSTED_PROXIES);
 
 function iceServers() {
   if (process.env.ICE_SERVERS) {
@@ -158,7 +155,7 @@ const server = http.createServer((req, res) => {
       if (req.method === 'GET' || req.method === 'HEAD') {
         if (!fs.existsSync(file)) return json(res, 404, { error: 'not found' });
         const stat = fs.statSync(file);
-        res.writeHead(200, { 'content-type': 'audio/wav', 'content-length': stat.size, 'cache-control': 'public, max-age=31536000, immutable' });
+        res.writeHead(200, { 'content-type': 'audio/wav', 'content-length': stat.size, 'cache-control': 'private, max-age=31536000, immutable' });
         if (req.method === 'HEAD') return res.end();
         return fs.createReadStream(file).pipe(res);
       }
@@ -185,6 +182,10 @@ const server = http.createServer((req, res) => {
 const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 16 * 1024 * 1024, perMessageDeflate: false });
 
 wss.on('connection', (ws, req) => {
+  if (ALLOWED_ORIGINS.length) {
+    const origin = String(req.headers.origin ?? '').replace(/\/+$/, '').toLowerCase();
+    if (!ALLOWED_ORIGINS.includes(origin)) return ws.close(4403, 'origin not allowed');
+  }
   const url = new URL(req.url ?? '/', 'http://x');
   const roomId = url.searchParams.get('room') ?? '';
   if (!ROOM_RE.test(roomId)) return ws.close(4000, 'bad room');
