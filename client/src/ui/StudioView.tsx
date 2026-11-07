@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import * as M from '../../../shared/model';
 import { useStudio } from './hooks';
 import { TopBar } from './TopBar';
@@ -10,12 +10,29 @@ import { People } from './People';
 import { Keyboard, useComputerKeyboard } from './Keyboard';
 import { Settings } from './Settings';
 import { ErrorBoundary } from './ErrorBoundary';
+import { LIMITS, Splitter, clamp, useLayout } from './Splitter';
 
 export function StudioView() {
   const s = useStudio();
   const [settings, setSettings] = useState(false);
   const [side, setSide] = useState(true);
+  const [layout, setLayout, resetLayout] = useLayout();
+  const center = useRef<HTMLElement>(null);
+  const [centerH, setCenterH] = useState(0);
+  useEffect(() => {
+    const el = center.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setCenterH(el.clientHeight));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   useComputerKeyboard();
+  // Keep the timeline at least LIMITS.timeline tall whatever the window size.
+  const kbH = clamp(layout.kbH, LIMITS.kbMin, LIMITS.kbMax);
+  const maxBottom = centerH ? centerH - LIMITS.timeline - kbH - 30 : 2000;
+  const bottomH = clamp(layout.bottomH, LIMITS.bottom, maxBottom);
+  const maxKb = centerH ? Math.min(LIMITS.kbMax, centerH - LIMITS.timeline - LIMITS.bottom - 30) : LIMITS.kbMax;
+  const sideW = clamp(layout.sideW, LIMITS.sideMin, Math.min(LIMITS.sideMax, window.innerWidth - 400));
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -45,10 +62,13 @@ export function StudioView() {
   }, [s]);
 
   return (
-    <div className={`studio ${side ? '' : 'no-side'}`}>
+    <div className={`studio ${side ? '' : 'no-side'}`}
+      style={{ ['--side-w' as string]: `${sideW}px`, ['--bottom-h' as string]: `${bottomH}px`, ['--kb-h' as string]: `${kbH}px` }}>
       <TopBar onSettings={() => setSettings(true)} onToggleSide={() => setSide(!side)} />
-      <main className="center">
+      <main className="center" ref={center}>
         <ErrorBoundary label="the arrangement"><Arrange /></ErrorBoundary>
+        <Splitter dir="row" label="Resize timeline and bottom panel" value={bottomH} min={LIMITS.bottom} max={maxBottom}
+          onChange={(v) => setLayout({ bottomH: v })} onReset={() => resetLayout('bottomH')} />
         <section className="bottom">
           <nav className="tabs" role="tablist">
             {(['track', 'editor', 'mixer'] as const).map((t) => (
@@ -65,8 +85,14 @@ export function StudioView() {
             </ErrorBoundary>
           </div>
         </section>
+        <Splitter dir="row" label="Resize keyboard" value={kbH} min={LIMITS.kbMin} max={maxKb}
+          onChange={(v) => setLayout({ kbH: v })} onReset={() => resetLayout('kbH')} />
         <Keyboard />
       </main>
+      {side && (
+        <Splitter dir="col" className="side-splitter" label="Resize people panel" value={sideW} min={LIMITS.sideMin} max={Math.min(LIMITS.sideMax, window.innerWidth - 400)}
+          onChange={(v) => setLayout({ sideW: v })} onReset={() => resetLayout('sideW')} />
+      )}
       {side && <ErrorBoundary label="the people panel"><People /></ErrorBoundary>}
       {settings && <Settings onClose={() => setSettings(false)} />}
       <div className="toasts" aria-live="polite">
