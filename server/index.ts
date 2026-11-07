@@ -18,6 +18,7 @@ import { Accounts } from './accounts.ts';
 import { Api, currentUser, originAllowed } from './api.ts';
 import { Songs } from './songs.ts';
 import { Sounds } from './sounds.ts';
+import { Storage, referencedAudioIds } from './storage.ts';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DATA = path.resolve(process.env.DATA_DIR ?? path.join(ROOT, 'data'));
@@ -32,6 +33,9 @@ const ID_RE = /^[a-z0-9]{4,40}$/i;
 
 fs.mkdirSync(path.join(DATA, 'rooms'), { recursive: true });
 fs.mkdirSync(path.join(DATA, 'audio'), { recursive: true });
+
+const MIN_FREE_GB = process.env.MIN_FREE_GB && Number(process.env.MIN_FREE_GB) >= 0 ? Number(process.env.MIN_FREE_GB) : 5;
+const storage = new Storage({ audioDir: path.join(DATA, 'audio'), minFreeBytes: MIN_FREE_GB * 1024 ** 3 });
 
 const now = () => performance.timeOrigin + performance.now();
 const auth = new Auth(path.join(DATA, 'rooms'));
@@ -156,7 +160,8 @@ const server = http.createServer((req, res) => {
       const file = audioPath(room, id);
       if (!auth.tokenValid(room, req.headers['x-wemake-token'] as string | undefined)) return json(res, 401, { error: 'join the session first' });
       if (req.method === 'PUT') {
-        if (fs.existsSync(file)) return json(res, 409, { error: 'exists' }); // takes are immutable
+        if (storage.resolveTake(room, id)) return json(res, 409, { error: 'exists' }); // takes are immutable
+        if (!storage.hasRoom()) return json(res, 507, { error: 'The server is almost out of space' });
         const len = Number(req.headers['content-length'] ?? 0);
         if (len > MAX_UPLOAD) return json(res, 413, { error: 'too large' });
         fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -172,16 +177,19 @@ const server = http.createServer((req, res) => {
           if (size > MAX_UPLOAD) return;
           fs.renameSync(tmp, file);
           json(res, 201, { ok: true, size });
+          void storage.enqueueFlac(file);
         });
         out.on('error', () => json(res, 500, { error: 'write failed' }));
         return;
       }
       if (req.method === 'GET' || req.method === 'HEAD') {
-        if (!fs.existsSync(file)) return json(res, 404, { error: 'not found' });
-        const stat = fs.statSync(file);
-        res.writeHead(200, { 'content-type': 'audio/wav', 'content-length': stat.size, 'cache-control': 'private, max-age=31536000, immutable' });
+        const take = storage.resolveTake(room, id);
+        if (!take) return json(res, 404, { error: 'not found' });
+        let stat: fs.Stats;
+        try { stat = fs.statSync(take.file); } catch { return json(res, 404, { error: 'not found' }); }
+        res.writeHead(200, { 'content-type': take.type, 'content-length': stat.size, 'cache-control': 'private, max-age=31536000, immutable' });
         if (req.method === 'HEAD') return res.end();
-        return fs.createReadStream(file).pipe(res);
+        return fs.createReadStream(take.file).on('error', () => res.destroy()).pipe(res);
       }
     }
     return json(res, 404, { error: 'not found' });
@@ -272,8 +280,13 @@ wss.on('connection', (ws, req) => {
           const bad = Auth.validate(msg.password);
           if (bad) return send(ws, { t: 'room', locked: auth.isLocked(room.id), error: bad });
           auth.setPassword(room.id, msg.password);
-          const present = [...room.peers.values()].map((p) => p.userId).filter((id): id is number => id != null);
-          try { songs.dropAbsentMembers(room.id, present); } catch (err) { console.error('song list update failed', err); }
+          // Only the song's owner re-locking it prunes absent members; otherwise anyone could grief lists.
+          try {
+            if (peer.userId != null && songs.isOwner(peer.userId, room.id)) {
+              const present = [...room.peers.values()].map((p) => p.userId).filter((id): id is number => id != null);
+              songs.dropAbsentMembers(room.id, present);
+            }
+          } catch (err) { console.error('song list update failed', err); }
         }
         return broadcast(room, { t: 'room', locked: auth.isLocked(room.id), by: peer.name });
       }
@@ -305,7 +318,13 @@ wss.on('connection', (ws, req) => {
     if (joined) broadcast(room, { t: 'peer-leave', id: peer.id });
     clearTimeout(helloTimer);
     if (--room.conns === 0) {
-      if (!room.fresh) saveRoom(room); // never persist rooms nobody actually joined
+      if (!room.fresh) {
+        saveRoom(room); // never persist rooms nobody actually joined
+        try {
+          const gone = storage.collect(room.id, referencedAudioIds(room.doc));
+          if (gone.length) console.log(`removed ${gone.length} unused take(s) from ${room.id}`);
+        } catch (err) { console.error('take cleanup failed', err); }
+      }
       room.doc.destroy();
       rooms.delete(room.id);
     }

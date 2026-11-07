@@ -34,6 +34,10 @@ export class Songs {
       .all(userId) as unknown as SongRow[];
   }
 
+  isOwner(userId: number, room: string): boolean {
+    return !!this.db.sql.prepare("SELECT 1 FROM user_rooms WHERE user_id = ? AND room = ? AND role = 'owner'").get(userId, room);
+  }
+
   /** After a password change: forget the song for members who aren't in the room right now. */
   dropAbsentMembers(room: string, presentUserIds: number[]): void {
     const keep = presentUserIds.filter(Number.isInteger);

@@ -15,7 +15,7 @@ let proc: ChildProcess;
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wemake-test-'));
 
 before(async () => {
-  proc = spawn('npx', ['tsx', 'server/index.ts'], { env: { ...process.env, PORT: String(PORT), DATA_DIR: dataDir, SIGNUP_CODE: 'letmein' }, stdio: 'pipe' });
+  proc = spawn('npx', ['tsx', 'server/index.ts'], { env: { ...process.env, PORT: String(PORT), DATA_DIR: dataDir, SIGNUP_CODE: 'letmein', MIN_FREE_GB: '0' }, stdio: 'pipe' });
   for (let i = 0; i < 50; i++) {
     try { await fetch(`${BASE}/api/time`); return; } catch { await new Promise((r) => setTimeout(r, 100)); }
   }
@@ -452,4 +452,22 @@ test('locking a song drops absent members from its list', async () => {
   assert.equal((await api('/api/me/songs', { cookie: stay.cookie })).body.songs.length, 1, 'connected member keeps it');
   assert.equal((await api('/api/me/songs', { cookie: owner.cookie })).body.songs.length, 1, 'owner keeps it');
   a.ws.close(); c.ws.close();
+});
+
+test('a guest locking a song does not drop members from their lists', async () => {
+  const owner = await newUser('glockowner');
+  const mem = await newUser('glockmember');
+  const a = client('itest-guestlock', 'o', undefined, owner.cookie);
+  await a.ready;
+  const b = client('itest-guestlock', 'm', undefined, mem.cookie);
+  await b.ready;
+  b.ws.close();
+  const g = client('itest-guestlock', 'guest');
+  await g.ready;
+  await waitUntil(async () => (await api('/api/me/songs', { cookie: mem.cookie })).body.songs.length === 1);
+  g.ws.send(JSON.stringify({ t: 'set-password', password: 'secret123' }));
+  await g.waitFor((m) => m.t === 'room' && m.locked);
+  await new Promise((r) => setTimeout(r, 200));
+  assert.equal((await api('/api/me/songs', { cookie: mem.cookie })).body.songs.length, 1);
+  a.ws.close(); g.ws.close();
 });
