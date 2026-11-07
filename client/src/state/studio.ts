@@ -44,9 +44,9 @@ export class Studio {
   unread = 0;
   private toastId = 0;
 
-  constructor(readonly room: string, readonly name: string, readonly color: string) {
+  constructor(readonly room: string, readonly name: string, readonly color: string, password = '') {
     const saved = loadSettings();
-    this.session = new Session(room, name, color);
+    this.session = new Session(room, name, color, password);
     this.engine = new Engine(room, this.session, {
       latencyHint: saved.latencyHint ?? 'interactive',
       roundTripMs: saved.roundTripMs ?? null,
@@ -55,7 +55,12 @@ export class Studio {
     });
     this.inputDevice = saved.inputDevice ?? '';
     this.jitterTarget = saved.jitterTarget ?? 0;
+    this.engine.authHeaders = () => ({ 'x-wemake-token': this.session.token });
     this.peers = new Peers(this.session, this.engine.liveTrack);
+    this.session.on('room', (m) => {
+      if (m.error) this.toast(m.error, 'error');
+      else this.toast(m.locked ? `${m.by ?? 'Someone'} set a session password` : `${m.by ?? 'Someone'} removed the session password`);
+    });
     this.peers.setJitterTarget(this.jitterTarget);
     this.snap = M.snapshot(this.session.doc);
 
@@ -328,7 +333,7 @@ export class Studio {
     try {
       for (let attempt = 0; ; attempt++) {
         try {
-          const res = await fetch(`/api/audio/${this.room}/${id}`, { method: 'PUT', body: data, headers: { 'content-type': 'audio/wav' } });
+          const res = await fetch(`/api/audio/${this.room}/${id}`, { method: 'PUT', body: data, headers: { 'content-type': 'audio/wav', 'x-wemake-token': this.session.token } });
           if (!res.ok) throw new Error(`upload failed (${res.status})`);
           return true;
         } catch (err) {

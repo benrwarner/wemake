@@ -13,10 +13,11 @@ function randomRoom() {
 function load(key: string, fallback: string) { try { return localStorage.getItem(key) ?? fallback; } catch { return fallback; } }
 function save(key: string, v: string) { try { localStorage.setItem(key, v); } catch { /* */ } }
 
-export function Lobby({ onJoin }: { onJoin: (room: string, name: string, color: string) => void }) {
+export function Lobby({ onJoin, error }: { onJoin: (room: string, name: string, color: string, password: string) => void; error?: string }) {
   const fromUrl = new URLSearchParams(location.search).get('room') ?? '';
   const [room, setRoom] = useState(fromUrl || randomRoom());
   const [name, setName] = useState(load('wemake.name', ''));
+  const [password, setPassword] = useState('');
   const [color, setColor] = useState(load('wemake.color', TRACK_COLORS[Math.floor(Math.random() * TRACK_COLORS.length)]));
   const clean = room.trim().toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64);
   const ok = clean.length > 0 && name.trim().length > 0;
@@ -24,7 +25,7 @@ export function Lobby({ onJoin }: { onJoin: (room: string, name: string, color: 
     e.preventDefault();
     if (!ok) return;
     save('wemake.name', name.trim()); save('wemake.color', color);
-    onJoin(clean, name.trim(), color);
+    onJoin(clean, name.trim(), color, password);
   };
   return (
     <div className="lobby">
@@ -41,6 +42,10 @@ export function Lobby({ onJoin }: { onJoin: (room: string, name: string, color: 
             <button type="button" className="ghost" onClick={() => setRoom(randomRoom())} title="New random session">↻</button>
           </div>
         </label>
+        <label>Password <span className="muted small">{fromUrl ? '(if the session has one)' : '(optional, locks your new session)'}</span>
+          <input type="password" value={password} autoComplete="off" onChange={(e) => setPassword(e.target.value)} placeholder={fromUrl ? 'Session password' : 'Leave empty for an open session'} />
+        </label>
+        {error && <div className="lobby-error" role="alert">{error}</div>}
         <div className="swatches" role="radiogroup" aria-label="Your colour">
           {TRACK_COLORS.map((c) => (
             <button type="button" key={c} role="radio" aria-checked={c === color} className={c === color ? 'on' : ''} style={{ background: c }} onClick={() => setColor(c)} />
@@ -49,7 +54,7 @@ export function Lobby({ onJoin }: { onJoin: (room: string, name: string, color: 
         <button className="primary big" disabled={!ok}>{fromUrl ? 'Join session' : 'Start session'}</button>
         <ul className="lobby-tips">
           <li><b>Wear headphones.</b> Speakers feed your friends back into your mic.</li>
-          <li>Send your friends the link once you're in.</li>
+          <li>Send your friends the link once you're in, and the password separately.</li>
           <li>Chrome or Edge gives the lowest live latency.</li>
         </ul>
       </form>

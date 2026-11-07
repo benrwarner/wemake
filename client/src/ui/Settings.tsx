@@ -23,6 +23,8 @@ export function Settings({ onClose }: { onClose: () => void }) {
       <div className="modal" role="dialog" aria-label="Audio settings">
         <header><h2>Audio &amp; latency</h2><button className="ghost" onClick={onClose} aria-label="Close">×</button></header>
 
+        <PasswordSection />
+
         <section>
           <h4>Input</h4>
           <div className="row">
@@ -96,5 +98,22 @@ export function Settings({ onClose }: { onClose: () => void }) {
         </section>
       </div>
     </div>
+  );
+}
+
+function PasswordSection() {
+  const s = useStudio();
+  const [pw, setPw] = useState('');
+  const locked = s.session.locked;
+  return (
+    <section>
+      <h4>Session password {locked ? <span className="ok small">· locked</span> : <span className="muted small">· open to anyone with the link</span>}</h4>
+      <p className="muted small">People already in the session stay connected. New people need the password. Share it separately from the link.</p>
+      <form className="row" onSubmit={(e) => { e.preventDefault(); if (pw.length >= 4) { s.session.setPassword(pw); setPw(''); } }}>
+        <input type="password" autoComplete="new-password" value={pw} minLength={4} onChange={(e) => setPw(e.target.value)} placeholder={locked ? 'New password' : 'Set a password (4+ characters)'} />
+        <button type="submit" disabled={pw.length < 4}>{locked ? 'Change' : 'Lock session'}</button>
+        {locked && <button type="button" className="ghost" onClick={() => s.session.setPassword(null)}>Remove</button>}
+      </form>
+    </section>
   );
 }

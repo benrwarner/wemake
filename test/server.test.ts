@@ -23,7 +23,7 @@ before(async () => {
 });
 after(() => { proc.kill(); fs.rmSync(dataDir, { recursive: true, force: true }); });
 
-function client(room: string, name: string) {
+function client(room: string, name: string, password?: string) {
   const doc = new Y.Doc();
   const ws = new WebSocket(`ws://localhost:${PORT}/ws?room=${room}`);
   const msgs: any[] = [];
@@ -33,7 +33,7 @@ function client(room: string, name: string) {
     if (bin) { Y.applyUpdate(doc, new Uint8Array(data as Buffer), 'remote'); synced(); return; }
     msgs.push(JSON.parse(data.toString()));
   });
-  ws.on('open', () => ws.send(JSON.stringify({ t: 'hello', name, color: '#ff6b4a' })));
+  ws.on('open', () => ws.send(JSON.stringify({ t: 'hello', name, color: '#ff6b4a', password })));
   doc.on('update', (u: Uint8Array, origin: unknown) => { if (origin !== 'remote' && ws.readyState === 1) ws.send(u); });
   const waitFor = async (pred: (m: any) => boolean) => {
     for (let i = 0; i < 100; i++) { const m = msgs.find(pred); if (m) return m; await new Promise((r) => setTimeout(r, 20)); }
@@ -76,13 +76,21 @@ test('clock ping, cursor relay, chat and signaling', async () => {
   a.ws.close(); b.ws.close();
 });
 
-test('audio takes upload once and are served immutably; bad ids rejected', async () => {
+test('audio takes need a session token, upload once and are served immutably; bad ids rejected', async () => {
+  const c = client('itest-three', 'Ana');
+  await c.ready;
+  const { token } = await c.waitFor((m) => m.t === 'welcome');
+  const headers = { 'x-wemake-token': token };
   const body = new Uint8Array([82, 73, 70, 70, 1, 2, 3, 4]);
-  const put = await fetch(`${BASE}/api/audio/itest-three/abc123`, { method: 'PUT', body });
+  assert.equal((await fetch(`${BASE}/api/audio/itest-three/abc123`, { method: 'PUT', body })).status, 401);
+  const put = await fetch(`${BASE}/api/audio/itest-three/abc123`, { method: 'PUT', body, headers });
   assert.equal(put.status, 201);
-  const again = await fetch(`${BASE}/api/audio/itest-three/abc123`, { method: 'PUT', body });
+  const again = await fetch(`${BASE}/api/audio/itest-three/abc123`, { method: 'PUT', body, headers });
   assert.equal(again.status, 409);
-  const get = await fetch(`${BASE}/api/audio/itest-three/abc123`);
+  assert.equal((await fetch(`${BASE}/api/audio/itest-three/abc123`)).status, 401);
+  assert.equal((await fetch(`${BASE}/api/audio/other-room/abc123`, { headers })).status, 401, 'token is scoped to its room');
+  c.ws.close();
+  const get = await fetch(`${BASE}/api/audio/itest-three/abc123`, { headers });
   assert.equal(get.status, 200);
   assert.deepEqual(new Uint8Array(await get.arrayBuffer()), body);
   assert.match(get.headers.get('cache-control') ?? '', /immutable/);
@@ -108,7 +116,9 @@ test('unjoined sockets cannot edit or signal; presence is sanitized', async () =
   const welcomeA = await a.waitFor((m) => m.t === 'welcome');
   // raw socket that never says hello
   const lurker = new WebSocket(`ws://localhost:${PORT}/ws?room=itest-five`);
-  await new Promise((r) => lurker.on('message', r));
+  const lurkerGot: unknown[] = [];
+  lurker.on('message', (m) => lurkerGot.push(m));
+  await new Promise((r) => lurker.on('open', r));
   lurker.send(JSON.stringify({ t: 'signal', to: welcomeA.id, data: { description: { type: 'offer', sdp: 'x' } } }));
   const evil = new Y.Doc(); M.setProject(evil, { name: 'hijacked' });
   lurker.send(Y.encodeStateAsUpdate(evil));
@@ -117,9 +127,60 @@ test('unjoined sockets cannot edit or signal; presence is sanitized', async () =
   await new Promise((r) => setTimeout(r, 200));
   assert.ok(!a.msgs.some((m) => m.t === 'signal'), 'signal from unjoined socket was relayed');
   assert.notEqual(M.snapshot(b.doc).project.name, 'hijacked');
+  assert.equal(lurkerGot.length, 0, 'unjoined socket received session data');
   b.ws.send(JSON.stringify({ t: 'presence', state: [1, 2] }));
   b.ws.send(JSON.stringify({ t: 'presence', state: { track: 'x', armed: 'yes', evil: { deep: 1 }, mix: { p: 999 } } }));
   const pres = await a.waitFor((m) => m.t === 'presence' && m.state.track === 'x');
   assert.deepEqual(pres.state, { track: 'x', mix: { p: 12 } });
   lurker.close(); a.ws.close(); b.ws.close();
+});
+
+test('password-protected sessions', async () => {
+  // creator locks a brand-new session from the lobby
+  const owner = client('itest-locked', 'Ana', 'hunter22');
+  await owner.ready;
+  assert.equal((await owner.waitFor((m) => m.t === 'welcome')).locked, true);
+  M.setProject(owner.doc, { name: 'Secret Song' });
+
+  // no password: rejected, and receives nothing about the session
+  const noPw = client('itest-locked', 'Eve');
+  const denied = await noPw.waitFor((m) => m.t === 'auth');
+  assert.match(denied.error, /password/i);
+  assert.equal(M.snapshot(noPw.doc).project.name, M.DEFAULT_PROJECT.name);
+  assert.ok(!noPw.msgs.some((m) => m.t === 'welcome' || m.t === 'peer-join'));
+
+  // wrong password: rejected; right password: in
+  const wrong = client('itest-locked', 'Eve', 'nope1234');
+  assert.equal((await wrong.waitFor((m) => m.t === 'auth')).error, 'Wrong password');
+  const friend = client('itest-locked', 'Ben', 'hunter22');
+  await friend.ready;
+  for (let i = 0; i < 50 && M.snapshot(friend.doc).project.name !== 'Secret Song'; i++) await new Promise((r) => setTimeout(r, 20));
+  assert.equal(M.snapshot(friend.doc).project.name, 'Secret Song');
+
+  // a password supplied for an existing open room does not lock it
+  const open1 = client('itest-open', 'Ana');
+  await open1.ready;
+  const late = client('itest-open', 'Ben', 'sneaky99');
+  assert.equal((await late.waitFor((m) => m.t === 'welcome')).locked, false);
+
+  // members can change and remove the password
+  owner.ws.send(JSON.stringify({ t: 'set-password', password: 'ab' }));
+  assert.match((await owner.waitFor((m) => m.t === 'room' && m.error)).error, /at least/);
+  owner.ws.send(JSON.stringify({ t: 'set-password', password: null }));
+  await friend.waitFor((m) => m.t === 'room' && m.locked === false);
+  const anyone = client('itest-locked', 'Cy');
+  await anyone.ready;
+  for (const c of [owner, friend, anyone, open1, late, noPw, wrong]) c.ws.close();
+});
+
+test('repeated wrong passwords are throttled', async () => {
+  const owner = client('itest-brute', 'Ana', 'correct-horse');
+  await owner.ready;
+  for (let i = 0; i < 8; i++) {
+    const c = client('itest-brute', 'Eve', `guess${i}`);
+    await c.waitFor((m) => m.t === 'auth');
+  }
+  const right = client('itest-brute', 'Eve', 'correct-horse');
+  assert.match((await right.waitFor((m) => m.t === 'auth')).error, /Too many/);
+  owner.ws.close();
 });

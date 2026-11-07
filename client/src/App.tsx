@@ -6,11 +6,18 @@ import { StudioView } from './ui/StudioView';
 
 export function App() {
   const [studio, setStudio] = useState<Studio | null>(null);
-  useEffect(() => () => studio?.dispose(), [studio]);
+  const [authError, setAuthError] = useState('');
+  useEffect(() => {
+    if (!studio) return;
+    // wrong/missing password: back to the lobby with the reason
+    const off = studio.session.on('auth-error', (err) => { setAuthError(err); setStudio(null); });
+    return () => { off(); studio.dispose(); };
+  }, [studio]);
   if (!studio) {
-    return <Lobby onJoin={(room, name, color) => {
+    return <Lobby error={authError} onJoin={(room, name, color, password) => {
+      setAuthError('');
       history.replaceState(null, '', `?room=${encodeURIComponent(room)}`);
-      const st = new Studio(room, name, color);
+      const st = new Studio(room, name, color, password);
       if (import.meta.env.DEV) (window as unknown as { wemake: Studio }).wemake = st; // debugging handle
       setStudio(st);
     }} />;

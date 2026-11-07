@@ -264,6 +264,8 @@ export class Engine {
   private loadingAudio = new Map<string, Promise<AudioBuffer | null>>();
 
   settings: EngineSettings;
+  /** Extra headers for audio requests (session token). */
+  authHeaders: () => Record<string, string> = () => ({});
   private listeners = new Map<EngineEvent, Set<(v: any) => void>>();
   private wamGroup?: Promise<string>;
 
@@ -571,7 +573,7 @@ export class Engine {
     p = (async () => {
       for (let attempt = 0; attempt < 5; attempt++) {
         try {
-          const res = await fetch(`/api/audio/${this.room}/${audioId}`);
+          const res = await fetch(`/api/audio/${this.room}/${audioId}`, { headers: this.authHeaders() });
           if (res.status === 404) { await new Promise((r) => setTimeout(r, 800 * (attempt + 1))); continue; } // upload may be in flight
           if (!res.ok) throw new Error(String(res.status));
           const buf = await this.ctx.decodeAudioData(await res.arrayBuffer());

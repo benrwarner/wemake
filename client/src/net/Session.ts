@@ -43,12 +43,17 @@ type Events = {
   chat: ChatMsg;
   welcome: string;
   synced: void;
+  'auth-error': string;
+  room: { locked: boolean; by?: string; error?: string };
 };
 
 export class Session extends Emitter<Events> {
   readonly doc = new Y.Doc();
   readonly undo: Y.UndoManager;
   myId = '';
+  /** Authorises audio upload/download for this room (issued after the password check). */
+  token = '';
+  locked = false;
   peers = new Map<string, PeerInfo>();
   chatLog: ChatMsg[] = [];
   /** Latest pointer of each peer (read every frame by the cursor overlays; no React churn). */
@@ -66,7 +71,7 @@ export class Session extends Emitter<Events> {
   private closed = false;
   private presence: PresenceState = {};
 
-  constructor(readonly room: string, public name: string, public color: string) {
+  constructor(readonly room: string, public name: string, public color: string, private password = '') {
     super();
     this.undo = new Y.UndoManager(
       [this.doc.getMap('tracks'), this.doc.getMap('clips'), this.doc.getArray('order'), this.doc.getMap('project')],
@@ -92,7 +97,7 @@ export class Session extends Emitter<Events> {
     let first = true;
     ws.onopen = () => {
       this.retry = 0;
-      ws.send(JSON.stringify({ t: 'hello', name: this.name, color: this.color }));
+      ws.send(JSON.stringify({ t: 'hello', name: this.name, color: this.color, password: this.password || undefined }));
       this.samples = [];
       for (let i = 0; i < 6; i++) setTimeout(() => this.ping(), i * 120);
       clearInterval(this.pingTimer);
@@ -125,8 +130,18 @@ export class Session extends Emitter<Events> {
 
   private handle(msg: any) {
     switch (msg.t) {
+      case 'auth':
+        this.closed = true; // wrong/missing password: don't keep retrying
+        this.emit('auth-error', msg.error);
+        break;
+      case 'room':
+        if (typeof msg.locked === 'boolean') this.locked = msg.locked;
+        this.emit('room', msg);
+        break;
       case 'welcome':
         this.myId = msg.id;
+        this.token = msg.token ?? '';
+        this.locked = !!msg.locked;
         this.peers = new Map(msg.peers.map((p: PeerInfo) => [p.id, { ...p, state: p.state ?? {} }]));
         this.emit('status', 'online');
         this.emit('welcome', msg.id);
@@ -196,6 +211,11 @@ export class Session extends Emitter<Events> {
       this.lastCursorSent = performance.now();
       this.send({ t: 'cursor', c: this.pendingCursor ?? null });
     }, wait);
+  }
+  /** Set, change (string) or remove (null) the session password. */
+  setPassword(password: string | null) {
+    this.send({ t: 'set-password', password });
+    if (password) this.password = password; // so our own reconnects still get in
   }
   setPresence(patch: PresenceState) {
     this.presence = { ...this.presence, ...patch };

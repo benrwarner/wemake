@@ -26,7 +26,7 @@ export function TopBar({ onSettings, onToggleSide }: { onSettings: () => void; o
         onChange={(ev) => s.edit((d) => M.setProject(d, { name: ev.target.value.slice(0, 60) }))}
       />
       <button className="ghost room" onClick={invite} title="Copy invite link">
-        <span className={`dot ${status}`} />{s.room}<span className="muted"> · invite</span>
+        <span className={`dot ${status}`} />{s.session.locked && <span title="Password protected">🔒 </span>}{s.room}<span className="muted"> · invite</span>
       </button>
 
       <div className="tune" role="group" aria-label="Listening mode">

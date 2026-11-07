@@ -25,6 +25,9 @@ npm run build && npm start   # production: one process serves app + API on $PORT
 | Plugins | 10 built-in effects and 3 instruments. Load **WAM 2.0** plugins or simple **WeMake plugin modules** by URL, with a per-user trust prompt. See [PLUGINS.md](PLUGINS.md). |
 | Export | Mixdown, per-track stems (offline render, 24-bit WAV), and a Standard MIDI File. These open in SoundCraft, GarageBand, Logic, Ableton and others. "Capture jam" records everything you hear, including friends. |
 
+### Privacy
+Sessions can be **password protected**: set one in the lobby when creating a session, or from ⚙ Settings → Session password while inside (anyone already in can change or remove it). The server stores only a salted scrypt hash (`data/rooms/<session>.auth.json`, never in the shared document). It sends nothing about a locked session (song, people, takes, media negotiation) until the password checks out, and it limits wrong guesses to 8 per address per 10 minutes. Recorded audio is only served to participants holding a session token. Open sessions get a 64-bit random name, so the link itself is hard to guess. Share passwords separately from links.
+
 ### Deploying for friends on other networks
 The server is one Node process (`npm start`). Put it behind HTTPS (required for microphone access). Peer-to-peer audio uses public STUN by default. For friends behind strict NATs, add a TURN server with `TURN_URL`, `TURN_USER` and `TURN_PASS` (or `ICE_SERVERS` as JSON). `DATA_DIR` sets where sessions and takes are stored.
 

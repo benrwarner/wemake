@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer, WebSocket } from 'ws';
 import * as Y from 'yjs';
 import { seedProject } from '../shared/model.ts';
+import { Auth } from './auth.ts';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DATA = path.resolve(process.env.DATA_DIR ?? path.join(ROOT, 'data'));
@@ -24,6 +25,17 @@ fs.mkdirSync(path.join(DATA, 'rooms'), { recursive: true });
 fs.mkdirSync(path.join(DATA, 'audio'), { recursive: true });
 
 const now = () => performance.timeOrigin + performance.now();
+const auth = new Auth(path.join(DATA, 'rooms'));
+
+/** Client address; proxy headers are only trusted from a local reverse proxy (nginx/cloudflared). */
+function clientIp(req: http.IncomingMessage) {
+  const remote = req.socket.remoteAddress ?? '';
+  if (/^(::1|127\.|::ffff:127\.)/.test(remote)) {
+    const fwd = (req.headers['cf-connecting-ip'] as string) ?? (req.headers['x-forwarded-for'] as string)?.split(',')[0];
+    if (fwd) return fwd.trim();
+  }
+  return remote;
+}
 
 function iceServers() {
   if (process.env.ICE_SERVERS) {
@@ -36,7 +48,7 @@ function iceServers() {
 
 // ---------------- rooms ----------------
 interface Peer { id: string; ws: WebSocket; name: string; color: string; state: Record<string, unknown> }
-interface Room { id: string; doc: Y.Doc; peers: Map<string, Peer>; conns: number; saveTimer?: NodeJS.Timeout }
+interface Room { id: string; doc: Y.Doc; peers: Map<string, Peer>; conns: number; fresh: boolean; saveTimer?: NodeJS.Timeout }
 const rooms = new Map<string, Room>();
 
 const roomFile = (id: string) => path.join(DATA, 'rooms', `${id.toLowerCase()}.ybin`);
@@ -47,9 +59,11 @@ function getRoom(id: string): Room {
   if (room) return room;
   const doc = new Y.Doc();
   const file = roomFile(key);
-  if (fs.existsSync(file)) Y.applyUpdate(doc, fs.readFileSync(file));
+  const exists = fs.existsSync(file);
+  if (exists) Y.applyUpdate(doc, fs.readFileSync(file));
   else seedProject(doc);
-  room = { id: key, doc, peers: new Map(), conns: 0 };
+  // fresh = nobody has joined yet; its first visitor may set the password
+  room = { id: key, doc, peers: new Map(), conns: 0, fresh: !exists && !auth.isLocked(key) };
   const r = room;
   doc.on('update', () => scheduleSave(r));
   rooms.set(key, room);
@@ -119,6 +133,7 @@ const server = http.createServer((req, res) => {
       const [, , room, id] = parts;
       if (!ROOM_RE.test(room) || !ID_RE.test(id)) return json(res, 400, { error: 'bad id' });
       const file = audioPath(room, id);
+      if (!auth.tokenValid(room, req.headers['x-wemake-token'] as string | undefined)) return json(res, 401, { error: 'join the session first' });
       if (req.method === 'PUT') {
         if (fs.existsSync(file)) return json(res, 409, { error: 'exists' }); // takes are immutable
         const len = Number(req.headers['content-length'] ?? 0);
@@ -178,8 +193,9 @@ wss.on('connection', (ws, req) => {
   let joined = false;
   room.conns++;
 
-  // Full document first; client merges and sends back anything the server lacks.
-  ws.send(Y.encodeStateAsUpdate(room.doc));
+  const ip = clientIp(req);
+  // Nothing about the session is sent until the client has said hello (and passed the password check).
+  const helloTimer = setTimeout(() => { if (!joined) ws.close(4408, 'hello timeout'); }, 15_000);
 
   ws.on('message', (data, isBinary) => {
     if (isBinary) {
@@ -195,13 +211,36 @@ wss.on('connection', (ws, req) => {
       case 'ping': return send(ws, { t: 'pong', c: msg.c, s: now() });
       case 'hello': {
         if (joined) return;
+        const deny = (error: string) => { send(ws, { t: 'auth', error }); ws.close(4401, 'auth'); };
+        if (auth.throttled(room.id, ip)) return deny('Too many wrong passwords. Try again in 10 minutes.');
+        if (auth.isLocked(room.id)) {
+          if (!auth.check(room.id, ip, msg.password)) return deny(msg.password ? 'Wrong password' : 'This session is password protected');
+        } else if (room.fresh && msg.password) {
+          const bad = Auth.validate(msg.password);
+          if (bad) return deny(bad);
+          auth.setPassword(room.id, msg.password);
+        }
         joined = true;
+        clearTimeout(helloTimer);
+        if (room.fresh) { room.fresh = false; scheduleSave(room); }
         peer.name = String(msg.name ?? 'Guest').slice(0, 32) || 'Guest';
         peer.color = /^#[0-9a-f]{6}$/i.test(msg.color) ? msg.color : '#888';
-        send(ws, { t: 'welcome', id: peer.id, peers: [...room.peers.values()].map(peerInfo), s: now() });
+        send(ws, { t: 'welcome', id: peer.id, peers: [...room.peers.values()].map(peerInfo), s: now(), token: auth.issueToken(room.id), locked: auth.isLocked(room.id) });
+        // Full document; the client merges and sends back anything the server lacks.
+        ws.send(Y.encodeStateAsUpdate(room.doc));
         room.peers.set(peer.id, peer);
         broadcast(room, { t: 'peer-join', peer: peerInfo(peer) }, peer.id);
         return;
+      }
+      case 'set-password': {
+        if (!joined) return;
+        if (msg.password == null) auth.setPassword(room.id, null);
+        else {
+          const bad = Auth.validate(msg.password);
+          if (bad) return send(ws, { t: 'room', locked: auth.isLocked(room.id), error: bad });
+          auth.setPassword(room.id, msg.password);
+        }
+        return broadcast(room, { t: 'room', locked: auth.isLocked(room.id), by: peer.name });
       }
       case 'presence':
         if (!joined) return;
@@ -229,8 +268,9 @@ wss.on('connection', (ws, req) => {
   ws.on('close', () => {
     room.peers.delete(peer.id);
     if (joined) broadcast(room, { t: 'peer-leave', id: peer.id });
+    clearTimeout(helloTimer);
     if (--room.conns === 0) {
-      saveRoom(room);
+      if (!room.fresh) saveRoom(room); // never persist rooms nobody actually joined
       room.doc.destroy();
       rooms.delete(room.id);
     }
@@ -241,7 +281,7 @@ wss.on('connection', (ws, req) => {
 setInterval(() => { for (const ws of wss.clients) if (ws.readyState === WebSocket.OPEN) ws.ping(); }, 20000).unref();
 
 function shutdown() {
-  for (const room of rooms.values()) saveRoom(room);
+  for (const room of rooms.values()) if (!room.fresh) saveRoom(room);
   process.exit(0);
 }
 process.on('SIGINT', shutdown);
