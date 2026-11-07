@@ -293,3 +293,68 @@ test('/api/me responses are no-store', async () => {
   assert.equal((await api('/api/me')).headers.get('cache-control'), 'no-store');
   assert.equal((await api('/api/auth/login', { body: { username: 'zz', password: 'q' } })).headers.get('cache-control'), 'no-store');
 });
+
+// ---------------- my songs ----------------
+const waitUntil = async (fn: () => Promise<boolean> | boolean, ms = 3000) => {
+  for (let t = 0; t < ms; t += 50) { if (await fn()) return; await new Promise((r) => setTimeout(r, 50)); }
+  throw new Error('condition not met');
+};
+
+test('joining while signed in adds the song', async () => {
+  const ana = await newUser('songana');
+  const bob = await newUser('songbob');
+  const a = client('itest-songs', '', undefined, ana.cookie);
+  await a.ready;
+  const welcome = await a.waitFor((m) => m.t === 'welcome');
+  assert.ok(welcome);
+  M.setProject(a.doc, { name: 'My Tune' });
+  const b = client('itest-songs', 'Bobby', undefined, bob.cookie);
+  await b.ready;
+  const join = await a.waitFor((m) => m.t === 'peer-join');
+  assert.equal(join.peer.name, 'Bobby');
+  const bJoin = await b.waitFor((m) => m.t === 'welcome');
+  assert.equal(bJoin.peers.find((p: any) => p.id === welcome.id)?.name, 'songana', 'empty name defaults to username');
+  a.ws.close(); b.ws.close();
+  await waitUntil(async () => (await api('/api/me/songs', { cookie: ana.cookie })).body.songs?.[0]?.title === 'My Tune');
+  const mine = (await api('/api/me/songs', { cookie: ana.cookie })).body.songs;
+  assert.equal(mine.length, 1);
+  assert.equal(mine[0].room, 'itest-songs');
+  assert.equal(mine[0].role, 'owner');
+  assert.equal(typeof mine[0].last_opened_at, 'number');
+  const theirs = (await api('/api/me/songs', { cookie: bob.cookie })).body.songs;
+  assert.equal(theirs[0].role, 'member');
+  assert.equal(theirs[0].title, 'My Tune');
+});
+
+test('removing a song only removes it from my list', async () => {
+  const u = await newUser('remover');
+  const c = client('itest-remove', 'x', undefined, u.cookie);
+  await c.ready;
+  c.ws.close();
+  await waitUntil(async () => (await api('/api/me/songs', { cookie: u.cookie })).body.songs.length === 1);
+  const r = await api('/api/me/songs/itest-remove', { method: 'DELETE', cookie: u.cookie });
+  assert.equal(r.status, 204);
+  assert.deepEqual((await api('/api/me/songs', { cookie: u.cookie })).body.songs, []);
+  await waitUntil(() => fs.existsSync(path.join(dataDir, 'rooms', 'itest-remove.ybin')));
+  assert.equal((await api('/api/me/songs/bad..room', { method: 'DELETE', cookie: u.cookie })).status, 400);
+});
+
+test('stale cookie joins as guest', async () => {
+  const u = await newUser('stale');
+  const { DatabaseSync } = await import('node:sqlite');
+  const sql = new DatabaseSync(path.join(dataDir, 'wemake.db'));
+  sql.exec('PRAGMA busy_timeout = 5000');
+  sql.prepare("DELETE FROM users WHERE username = 'stale'").run();
+  const c = client('itest-stale', 'Guesty', undefined, u.cookie);
+  await c.ready;
+  assert.ok(await c.waitFor((m) => m.t === 'welcome'));
+  c.ws.close();
+  await new Promise((r) => setTimeout(r, 200));
+  assert.equal((sql.prepare("SELECT COUNT(*) n FROM user_rooms WHERE room = 'itest-stale'").get() as any).n, 0);
+  sql.close();
+});
+
+test('songs API requires sign-in', async () => {
+  assert.equal((await api('/api/me/songs')).status, 401);
+  assert.equal((await api('/api/me/songs/x', { method: 'DELETE' })).status, 401);
+});

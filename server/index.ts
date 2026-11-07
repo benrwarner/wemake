@@ -10,12 +10,13 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer, WebSocket } from 'ws';
 import * as Y from 'yjs';
-import { seedProject } from '../shared/model.ts';
+import { seedProject, yProject } from '../shared/model.ts';
 import { Auth } from './auth.ts';
 import { clientIp as resolveClientIp, parseTrust } from './clientIp.ts';
 import { Db } from './db.ts';
 import { Accounts } from './accounts.ts';
-import { Api } from './api.ts';
+import { Api, currentUser } from './api.ts';
+import { Songs } from './songs.ts';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DATA = path.resolve(process.env.DATA_DIR ?? path.join(ROOT, 'data'));
@@ -40,7 +41,8 @@ const clientIp = (req: http.IncomingMessage) => resolveClientIp(req, TRUSTED_PRO
 // ---------------- accounts ----------------
 const db = new Db(path.join(DATA, 'wemake.db'));
 const accounts = new Accounts(db);
-const api = new Api({ accounts, ip: clientIp, allowedOrigins: ALLOWED_ORIGINS, signupCode: process.env.SIGNUP_CODE || undefined });
+const songs = new Songs(db);
+const api = new Api({ accounts, songs, ip: clientIp, allowedOrigins: ALLOWED_ORIGINS, signupCode: process.env.SIGNUP_CODE || undefined });
 const BACKUPS = path.join(DATA, 'backups');
 function backupDb() {
   try { db.backup(BACKUPS); } catch (err) { console.error('database backup failed', err); }
@@ -91,6 +93,7 @@ function saveRoom(room: Room) {
   const tmp = roomFile(room.id) + '.tmp';
   fs.writeFileSync(tmp, Y.encodeStateAsUpdate(room.doc));
   fs.renameSync(tmp, roomFile(room.id));
+  try { songs.setTitle(room.id, String(yProject(room.doc).get('name') ?? '')); } catch (err) { console.error('song title update failed', err); }
 }
 
 function send(ws: WebSocket, msg: unknown) {
@@ -214,6 +217,8 @@ wss.on('connection', (ws, req) => {
   room.conns++;
 
   const ip = clientIp(req);
+  let user: ReturnType<typeof currentUser> = null;
+  try { user = currentUser(req, accounts); } catch (err) { console.error('session lookup failed', err); }
   // Nothing about the session is sent until the client has said hello (and passed the password check).
   const helloTimer = setTimeout(() => { if (!joined) ws.close(4408, 'hello timeout'); }, 15_000);
 
@@ -242,8 +247,12 @@ wss.on('connection', (ws, req) => {
         }
         joined = true;
         clearTimeout(helloTimer);
+        const wasFresh = room.fresh;
         if (room.fresh) { room.fresh = false; scheduleSave(room); }
-        peer.name = String(msg.name ?? 'Guest').slice(0, 32) || 'Guest';
+        if (user) {
+          try { songs.touch(user.id, room.id, wasFresh ? 'owner' : 'member'); } catch (err) { console.error('song list update failed', err); }
+        }
+        peer.name = String(msg.name ?? '').slice(0, 32) || user?.username || 'Guest';
         peer.color = /^#[0-9a-f]{6}$/i.test(msg.color) ? msg.color : '#888';
         send(ws, { t: 'welcome', id: peer.id, peers: [...room.peers.values()].map(peerInfo), s: now(), token: auth.issueToken(room.id), locked: auth.isLocked(room.id) });
         // Full document; the client merges and sends back anything the server lacks.

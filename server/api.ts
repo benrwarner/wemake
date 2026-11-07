@@ -1,12 +1,14 @@
 // JSON API for accounts, "My songs" and saved sounds (/api/auth/*, /api/me*).
 import type http from 'node:http';
 import { Limiter, type Accounts, type User } from './accounts.ts';
+import type { Songs } from './songs.ts';
 
 export const COOKIE = 'wm_session';
 const MAX_AGE = 30 * 24 * 3600; // seconds
 
 export interface ApiDeps {
   accounts: Accounts;
+  songs: Songs;
   ip: (req: http.IncomingMessage) => string;
   allowedOrigins: string[];
   signupCode?: string;
@@ -94,6 +96,7 @@ function send(res: http.ServerResponse, status: number, body?: unknown, cookie?:
   res.end(body === undefined ? undefined : JSON.stringify(body));
 }
 
+const ROOM_RE = /^[a-z0-9][a-z0-9-]{0,63}$/i;
 const TOO_MANY = 'Too many attempts. Try again in 15 minutes.';
 const str = (v: unknown) => (typeof v === 'string' ? v : '');
 
@@ -169,7 +172,24 @@ export class Api {
       return send(res, 204, undefined, sessionCookie(null, req));
     }
 
+    if (p === '/api/me/songs' || p.startsWith('/api/me/songs/')) {
+      const user = this.requireUser(req);
+      if (p === '/api/me/songs' && method === 'GET') return send(res, 200, { songs: this.deps.songs.list(user.id) });
+      const room = decodeURIComponent(p.slice('/api/me/songs/'.length));
+      if (method === 'DELETE' && room) {
+        if (!ROOM_RE.test(room)) throw new HttpError(400, 'Bad song id');
+        this.deps.songs.remove(user.id, room.toLowerCase());
+        return send(res, 204);
+      }
+    }
+
     throw new HttpError(404, 'Not found');
+  }
+
+  private requireUser(req: http.IncomingMessage): User {
+    const user = this.user(req);
+    if (!user) throw new HttpError(401, 'Sign in first');
+    return user;
   }
 }
 
